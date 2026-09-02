@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {
   AlertTriangle,
   Bell,
@@ -8,7 +9,6 @@ import {
   Map,
   Waves,
   Cloud,
-  Wind,
   Navigation,
   Settings,
   FileText,
@@ -16,19 +16,14 @@ import {
   Info,
   Send,
   ChevronDown,
-  ChevronRight,
-  MapPin,
-  Layers,
-  Crosshair,
-  Pencil,
-  Ship,
-  CircleCheck,
-  ArrowUp,
-  ArrowDown,
-  Sun,
-  CloudRain,
-  Thermometer,
 } from "lucide-react";
+
+const MarineMap = dynamic(
+  () => import("@/components/MarineMap"),
+  {
+    ssr: false,
+  }
+);
 
 const navItems = [
   { icon: Home, label: "Dashboard", active: true },
@@ -210,77 +205,6 @@ function Stats() {
   );
 }
 
-function MarineMap() {
-  return (
-    <div className="map">
-      <div className="map-tools">
-        <button className="map-tool">
-          <Navigation size={17} />
-        </button>
-        <button className="map-tool">
-          <Layers size={17} />
-        </button>
-        <button className="map-tool">
-          <Map size={17} />
-        </button>
-        <button className="map-tool">
-          <Pencil size={17} />
-        </button>
-      </div>
-
-      <div className="map-label label-bheemili">
-        Bheemunipatnam
-      </div>
-
-      <div className="map-label label-vizag">
-        Visakhapatnam
-      </div>
-
-      <div className="map-label label-gangavaram">
-        Gangavaram
-      </div>
-
-      <div className="location-marker">
-        <span />
-      </div>
-
-      <div className="pfz">
-        <div className="pfz-line" />
-
-        <div className="pfz-circle">
-          🐟
-        </div>
-
-        <div style={{ marginTop: 5 }}>
-          18.6 km
-        </div>
-
-        <div style={{ fontSize: 10, marginTop: 3 }}>
-          Potential Fishing Zone
-        </div>
-      </div>
-
-      <div className="restricted">
-        ⚠️
-      </div>
-
-      <div className="zoom">
-        <button>+</button>
-        <button>−</button>
-        <button>
-          <Crosshair size={16} />
-        </button>
-      </div>
-
-      <div className="map-legend">
-        <span>📍 Your Location</span>
-        <span>🐟 Potential Fishing Zone</span>
-        <span>▧ Avoid / Restricted Zone</span>
-      </div>
-    </div>
-  );
-}
-
 function Recommendation() {
   const reasons = [
     ["Wave Height", "1.8 m", "up"],
@@ -367,7 +291,9 @@ function LowerCards() {
       >
         <div className="metric">
           <span>〰 Wave Height</span>
-          <span>1.8 m <span className="red">↑</span></span>
+          <span>
+            1.8 m <span className="red">↑</span>
+          </span>
         </div>
 
         <div className="metric">
@@ -377,12 +303,16 @@ function LowerCards() {
 
         <div className="metric">
           <span>♨ Sea Surface Temp.</span>
-          <span>29.4 °C <span className="red">↑</span></span>
+          <span>
+            29.4 °C <span className="red">↑</span>
+          </span>
         </div>
 
         <div className="metric">
           <span>〰 Current Speed</span>
-          <span>0.6 m/s <span className="green">↓</span></span>
+          <span>
+            0.6 m/s <span className="green">↓</span>
+          </span>
         </div>
 
         <div className="more">
@@ -396,7 +326,9 @@ function LowerCards() {
       >
         <div className="metric">
           <span>〰 Wind Speed</span>
-          <span>24 km/h <span className="red">↑</span></span>
+          <span>
+            24 km/h <span className="red">↑</span>
+          </span>
         </div>
 
         <div className="metric">
@@ -411,7 +343,9 @@ function LowerCards() {
 
         <div className="metric">
           <span>☁ Cloud Cover</span>
-          <span>32 % <span className="green">↓</span></span>
+          <span>
+            32 % <span className="green">↓</span>
+          </span>
         </div>
 
         <div className="more">

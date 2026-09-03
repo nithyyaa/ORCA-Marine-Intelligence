@@ -45,6 +45,8 @@ export default function AskORCA() {
   >([]);
   const [loading, setLoading] = useState(false);
 
+  const [language, setLanguage] = useState("en");
+
   async function sendMessage(text = input) {
     if (!text.trim() || loading) return;
 
@@ -66,6 +68,7 @@ export default function AskORCA() {
         },
         body: JSON.stringify({
           query: question,
+          language,
         }),
       });
 
@@ -119,9 +122,37 @@ export default function AskORCA() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300">
-          <MapPin size={15} className="text-cyan-400" />
-          Visakhapatnam, India
+        <div className="flex items-center gap-3">
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 outline-none"
+          >
+            <option value="en" className="bg-[#06111f]">
+              English
+            </option>
+
+            <option value="te" className="bg-[#06111f]">
+              తెలుగు
+            </option>
+
+            <option value="hi" className="bg-[#06111f]">
+              हिन्दी
+            </option>
+
+            <option value="ta" className="bg-[#06111f]">
+              தமிழ்
+            </option>
+
+            <option value="kn" className="bg-[#06111f]">
+              ಕನ್ನಡ
+            </option>
+          </select>
+
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300">
+            <MapPin size={15} className="text-cyan-400" />
+            Visakhapatnam, India
+          </div>
         </div>
       </header>
 

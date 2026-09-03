@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { marineData } from "@/lib/marine-data";
+import { useEffect, useState } from "react";
 import {
   Home,
   Bot,
@@ -45,7 +45,7 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-function Sidebar() {
+function Sidebar({ locationName }: { locationName: string }) {
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-screen w-[272px] flex-col border-r border-white/10 bg-[#071525]">
       <div className="border-b border-white/10 px-6 py-7">
@@ -127,8 +127,7 @@ function Sidebar() {
             </p>
 
             <p className="text-xs text-slate-500">
-              {marineData.location.name},{" "}
-              {marineData.location.country}
+              {locationName}
             </p>
           </div>
 
@@ -140,9 +139,59 @@ function Sidebar() {
 }
 
 export default function WeatherPage() {
+  const [weatherData, setWeatherData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadWeather() {
+      try {
+        const response = await fetch("/api/weather", { cache: "no-store" });
+        const data = await response.json();
+
+        if (response.ok) {
+          setWeatherData(data);
+        }
+      } catch (error) {
+        console.error("Weather page error:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadWeather();
+  }, []);
+
+  const locationName = weatherData?.location || "Operating location";
+  const temperature = weatherData?.temperature;
+  const windSpeed = weatherData?.windSpeed;
+  const windDirection = weatherData?.windDirection;
+  const weatherCode = weatherData?.weatherCode;
+  const precipitationProbability = weatherData?.precipitationProbability;
+  const time = weatherData?.time;
+
+  const display = (value: unknown, suffix = "") =>
+    value === null || value === undefined ? "Unavailable" : `${value}${suffix}`;
+
+  const condition =
+    weatherCode === 0
+      ? "Clear sky"
+      : weatherCode === 1 || weatherCode === 2
+        ? "Partly cloudy"
+        : weatherCode === 3
+          ? "Overcast"
+          : weatherCode === 45 || weatherCode === 48
+            ? "Fog"
+            : weatherCode >= 51 && weatherCode <= 67
+              ? "Rain"
+              : weatherCode >= 80 && weatherCode <= 82
+                ? "Rain showers"
+                : weatherCode >= 95
+                  ? "Thunderstorm"
+                  : "Current conditions";
+
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
-      <Sidebar />
+      <Sidebar locationName={locationName} />
 
       <main className="ml-[272px] min-h-screen">
         <header className="flex h-20 items-center justify-between border-b border-white/10 bg-[#06111f] px-8">
@@ -159,8 +208,7 @@ export default function WeatherPage() {
           <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-300">
             <MapPin size={15} className="text-amber-400" />
 
-            {marineData.location.name},{" "}
-            {marineData.location.country}
+            {locationName}
           </div>
         </header>
 
@@ -180,7 +228,7 @@ export default function WeatherPage() {
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               Monitor atmospheric conditions around{" "}
-              {marineData.location.name} to support safer marine
+              {locationName} to support safer marine
               operations.
             </p>
           </div>
@@ -205,14 +253,14 @@ export default function WeatherPage() {
                       </p>
 
                       <p className="mt-1 text-lg font-medium">
-                        {marineData.weather.condition}
+                        {condition}
                       </p>
                     </div>
                   </div>
 
                   <div className="mt-7 flex items-end gap-3">
                     <span className="text-6xl font-semibold tracking-tight">
-                      {marineData.weather.temperature}°
+                      {display(temperature)}°
                     </span>
 
                     <span className="mb-2 text-xl text-slate-500">
@@ -221,8 +269,7 @@ export default function WeatherPage() {
                   </div>
 
                   <p className="mt-3 text-sm text-slate-500">
-                    {marineData.location.name},{" "}
-                    {marineData.location.country}
+                    {locationName}
                   </p>
                 </div>
 
@@ -238,7 +285,7 @@ export default function WeatherPage() {
                     </p>
 
                     <p className="mt-1 text-lg font-semibold">
-                      {marineData.weather.windSpeed} km/h
+                      {display(windSpeed)} km/h
                     </p>
                   </div>
 
@@ -253,7 +300,7 @@ export default function WeatherPage() {
                     </p>
 
                     <p className="mt-1 text-lg font-semibold">
-                      {marineData.weather.windDirection}
+                      {display(windDirection, "°")}
                     </p>
                   </div>
 
@@ -268,7 +315,7 @@ export default function WeatherPage() {
                     </p>
 
                     <p className="mt-1 text-lg font-semibold">
-                      {marineData.weather.visibility} km
+                      Unavailable km
                     </p>
                   </div>
 
@@ -283,7 +330,11 @@ export default function WeatherPage() {
                     </p>
 
                     <p className="mt-1 text-lg font-semibold">
-                      Stable
+                      {precipitationProbability !== null &&
+                      precipitationProbability !== undefined &&
+                      precipitationProbability > 60
+                        ? "Rain likely"
+                        : "Stable"}
                     </p>
                   </div>
                 </div>
@@ -306,13 +357,13 @@ export default function WeatherPage() {
 
               <p className="mt-3 text-sm leading-6 text-slate-400">
                 Weather conditions around{" "}
-                {marineData.location.name} are currently{" "}
+                {locationName} are currently{" "}
                 <span className="font-medium text-amber-300">
-                  {marineData.weather.condition.toLowerCase()}
+                  {condition.toLowerCase()}
                 </span>
                 . Wind speeds are around{" "}
-                {marineData.weather.windSpeed} km/h with{" "}
-                {marineData.weather.visibility} km visibility.
+                {display(windSpeed)} km/h with{" "}
+                Unavailable km visibility.
               </p>
 
               <div className="mt-6 rounded-xl border border-amber-400/10 bg-amber-400/5 p-4">
@@ -354,7 +405,7 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-1 text-3xl font-semibold">
-                  {marineData.weather.temperature}°C
+                  {display(temperature)}°C
                 </p>
 
                 <p className="mt-2 text-xs text-slate-500">
@@ -375,14 +426,14 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-1 text-3xl font-semibold">
-                  {marineData.weather.windSpeed}
+                  {display(windSpeed)}
                   <span className="ml-1 text-base font-normal text-slate-500">
                     km/h
                   </span>
                 </p>
 
                 <p className="mt-2 text-xs text-slate-500">
-                  {marineData.weather.windDirection} direction
+                  {display(windDirection, "°")} direction
                 </p>
               </div>
 
@@ -399,7 +450,7 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-1 text-3xl font-semibold">
-                  {marineData.weather.visibility}
+                  Unavailable
                   <span className="ml-1 text-base font-normal text-slate-500">
                     km
                   </span>
@@ -423,7 +474,7 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-1 text-2xl font-semibold">
-                  {marineData.weather.condition}
+                  {condition}
                 </p>
 
                 <p className="mt-2 text-xs text-slate-500">
@@ -457,12 +508,12 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-amber-300">
-                  {marineData.weather.windSpeed} km/h
+                  {display(windSpeed)} km/h
                 </p>
 
                 <p className="mt-2 text-xs leading-5 text-slate-600">
                   Winds are currently coming from the{" "}
-                  {marineData.weather.windDirection} direction.
+                  {display(windDirection, "°")} direction.
                 </p>
               </div>
 
@@ -472,7 +523,7 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-amber-300">
-                  {marineData.weather.visibility} km
+                  Unavailable km
                 </p>
 
                 <p className="mt-2 text-xs leading-5 text-slate-600">
@@ -487,7 +538,7 @@ export default function WeatherPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-amber-300">
-                  {marineData.weather.condition}
+                  {condition}
                 </p>
 
                 <p className="mt-2 text-xs leading-5 text-slate-600">
@@ -513,9 +564,9 @@ export default function WeatherPage() {
                 </h3>
 
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  Weather information is currently synchronized
-                  with the ORCA marine data layer. Last update:{" "}
-                  {marineData.system.lastUpdated}.
+                  Weather information is currently
+                  provided by the live weather connector. Last update:{" "}
+                  {time || "Unavailable"}.
                 </p>
               </div>
             </div>

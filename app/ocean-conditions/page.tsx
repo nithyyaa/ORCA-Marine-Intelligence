@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { marineData } from "@/lib/marine-data";
+import { useEffect, useState } from "react";
 import {
   Home,
   Bot,
@@ -45,38 +45,7 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-const conditions = [
-  {
-    label: "Sea Surface Temperature",
-    value: `${marineData.ocean.sst}°C`,
-    status: "Normal",
-    icon: Thermometer,
-    type: "normal",
-  },
-  {
-    label: "Wave Height",
-    value: `${marineData.ocean.waveHeight} m`,
-    status: marineData.ocean.seaState,
-    icon: Waves,
-    type: "moderate",
-  },
-  {
-    label: "Wind Speed",
-    value: `${marineData.weather.windSpeed} km/h`,
-    status: "Moderate",
-    icon: Wind,
-    type: "moderate",
-  },
-  {
-    label: "Visibility",
-    value: `${marineData.weather.visibility} km`,
-    status: "Good",
-    icon: Eye,
-    type: "good",
-  },
-];
-
-function Sidebar() {
+function Sidebar({ locationName }: { locationName: string }) {
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-screen w-[272px] flex-col border-r border-white/10 bg-[#071525]">
       <div className="border-b border-white/10 px-6 py-7">
@@ -158,8 +127,7 @@ function Sidebar() {
             </p>
 
             <p className="text-xs text-slate-500">
-              {marineData.location.name},{" "}
-              {marineData.location.country}
+              {locationName}
             </p>
           </div>
 
@@ -201,9 +169,65 @@ function ConditionCard({
 }
 
 export default function OceanConditionsPage() {
+  const [oceanData, setOceanData] = useState<any>(null);
+  const [weatherData, setWeatherData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [oceanResponse, weatherResponse] = await Promise.all([
+          fetch("/api/ocean", { cache: "no-store" }),
+          fetch("/api/weather", { cache: "no-store" }),
+        ]);
+
+        const ocean = await oceanResponse.json();
+        const weather = await weatherResponse.json();
+
+        if (oceanResponse.ok) {
+          setOceanData(ocean);
+        }
+
+        if (weatherResponse.ok) {
+          setWeatherData(weather);
+        }
+      } catch (error) {
+        console.error("Failed to fetch marine data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, []);
+
+  const locationName = oceanData?.location || weatherData?.location || "Operating location";
+  const sst = oceanData?.sst;
+  const waveHeight = oceanData?.waveHeight;
+  const windSpeed = weatherData?.windSpeed;
+  const windDirection = weatherData?.windDirection;
+  const waveDirection = oceanData?.waveDirection;
+  const wavePeriod = oceanData?.wavePeriod;
+  const oceanCurrentVelocity = oceanData?.oceanCurrentVelocity;
+  const oceanCurrentDirection = oceanData?.oceanCurrentDirection;
+
+  const seaState =
+    typeof waveHeight === "number"
+      ? waveHeight < 1
+        ? "Calm"
+        : waveHeight < 1.5
+          ? "Slight"
+          : waveHeight < 2.5
+            ? "Moderate"
+            : "Rough"
+      : "Unavailable";
+
+  const display = (value: unknown, suffix = "") =>
+    value === null || value === undefined ? "Unavailable" : `${value}${suffix}`;
+
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
-      <Sidebar />
+      <Sidebar locationName={locationName} />
 
       <main className="ml-[272px] min-h-screen">
         <header className="sticky top-0 z-40 flex h-20 items-center justify-between border-b border-white/10 bg-[#06111f]/90 px-8 backdrop-blur-xl">
@@ -219,8 +243,7 @@ export default function OceanConditionsPage() {
 
           <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-300">
             <MapPin size={15} className="text-cyan-400" />
-            {marineData.location.name},{" "}
-            {marineData.location.country}
+            {locationName}
           </div>
         </header>
 
@@ -237,7 +260,7 @@ export default function OceanConditionsPage() {
 
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               Monitor key oceanographic parameters around{" "}
-              {marineData.location.name} to understand the
+              {locationName} to understand the
               current marine environment.
             </p>
           </div>
@@ -246,29 +269,29 @@ export default function OceanConditionsPage() {
             <ConditionCard
               icon={Thermometer}
               label="Sea Surface Temperature"
-              value={`${marineData.ocean.sst}°C`}
+              value={`${display(sst, "°C")}`}
               description="Current surface temperature"
             />
 
             <ConditionCard
               icon={Droplets}
               label="Chlorophyll"
-              value={marineData.ocean.chlorophyll}
+              value="Unavailable"
               description="Current biological productivity"
             />
 
             <ConditionCard
               icon={Wind}
               label="Wind Speed"
-              value={`${marineData.weather.windSpeed} km/h`}
+              value={`${display(windSpeed, " km/h")}`}
               description="Current wind conditions"
             />
 
             <ConditionCard
               icon={Waves}
               label="Wave Height"
-              value={`${marineData.ocean.waveHeight} m`}
-              description={`${marineData.ocean.seaState} sea state`}
+              value={`${display(waveHeight, " m")}`}
+              description={`${seaState} sea state`}
             />
           </div>
 
@@ -286,7 +309,7 @@ export default function OceanConditionsPage() {
                 </div>
 
                 <div className="rounded-full bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-400">
-                  Live conditions
+                  {loading ? "Loading" : "Live conditions"}
                 </div>
               </div>
 
@@ -301,11 +324,11 @@ export default function OceanConditionsPage() {
                   </div>
 
                   <p className="mt-4 text-xl font-semibold">
-                    {marineData.ocean.seaState}
+                    {seaState}
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Generally navigable with caution
+                    {seaState === "Rough" ? "Elevated wave conditions require caution" : seaState === "Unavailable" ? "Marine sea-state data unavailable" : "Current wave conditions"}
                   </p>
                 </div>
 
@@ -319,11 +342,11 @@ export default function OceanConditionsPage() {
                   </div>
 
                   <p className="mt-4 text-xl font-semibold">
-                    {marineData.weather.windDirection}
+                    {display(windDirection)}
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    {marineData.weather.windSpeed} km/h average speed
+                    {display(windSpeed, " km/h")} average speed
                   </p>
                 </div>
 
@@ -337,11 +360,11 @@ export default function OceanConditionsPage() {
                   </div>
 
                   <p className="mt-4 text-xl font-semibold">
-                    {marineData.weather.visibility} km
+                    Unavailable
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Suitable visibility for operations
+                    Visibility data not provided by the current API
                   </p>
                 </div>
 
@@ -350,16 +373,16 @@ export default function OceanConditionsPage() {
                     <Activity size={18} className="text-cyan-400" />
 
                     <span className="text-sm text-slate-400">
-                      Ocean Activity
+                      Ocean Current
                     </span>
                   </div>
 
                   <p className="mt-4 text-xl font-semibold">
-                    {marineData.ocean.seaState}
+                    {display(oceanCurrentVelocity, " km/h")}
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Normal marine activity detected
+                    Direction: {display(oceanCurrentDirection, "°")} · Wave period: {display(wavePeriod, " s")}
                   </p>
                 </div>
               </div>
@@ -377,10 +400,10 @@ export default function OceanConditionsPage() {
               <p className="mt-3 text-sm leading-6 text-slate-400">
                 Current ocean conditions are assessed as{" "}
                 <span className="font-medium text-cyan-300">
-                  {marineData.ocean.seaState.toLowerCase()}
+                  {seaState.toLowerCase()}
                 </span>
-                . Conditions are generally suitable for marine
-                operations, but users should continue monitoring
+                . Current marine parameters are being monitored from the selected
+                operating location. Users should continue monitoring
                 changes in waves and wind.
               </p>
 
@@ -390,7 +413,7 @@ export default function OceanConditionsPage() {
                 </p>
 
                 <p className="mt-1 text-lg font-semibold text-cyan-300">
-                  {marineData.ocean.seaState}
+                  {seaState}
                 </p>
               </div>
             </div>
@@ -418,7 +441,7 @@ export default function OceanConditionsPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-cyan-300">
-                  Stable
+                  Based on current SST data
                 </p>
               </div>
 
@@ -428,7 +451,7 @@ export default function OceanConditionsPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-cyan-300">
-                  {marineData.ocean.chlorophyll}
+                  Unavailable
                 </p>
               </div>
 
@@ -438,7 +461,7 @@ export default function OceanConditionsPage() {
                 </p>
 
                 <p className="mt-2 font-medium text-cyan-300">
-                  {marineData.ocean.seaState}
+                  {seaState}
                 </p>
               </div>
             </div>

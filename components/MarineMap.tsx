@@ -4,6 +4,28 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+type PFZPoint = {
+  latitude: number;
+  longitude: number;
+};
+
+type PFZZone = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  geometry: PFZPoint[];
+  sector?: string;
+  year?: number | null;
+  julianDay?: string | null;
+  length?: number | null;
+  source?: string;
+};
+
+const DEFAULT_LOCATION = {
+  latitude: 17.6868,
+  longitude: 83.2185,
+};
+
 export default function MarineMap() {
   const mapRef = useRef<HTMLDivElement>(null);
 
@@ -12,8 +34,29 @@ export default function MarineMap() {
 
     let cancelled = false;
 
+    let latitude = DEFAULT_LOCATION.latitude;
+    let longitude = DEFAULT_LOCATION.longitude;
+
+    const storedLocation = localStorage.getItem("orca-location");
+
+    if (storedLocation) {
+      try {
+        const parsed = JSON.parse(storedLocation);
+
+        if (
+          Number.isFinite(parsed.latitude) &&
+          Number.isFinite(parsed.longitude)
+        ) {
+          latitude = parsed.latitude;
+          longitude = parsed.longitude;
+        }
+      } catch {
+        console.warn("Invalid stored ORCA location");
+      }
+    }
+
     const map = L.map(mapRef.current, {
-      center: [17.6868, 83.2185],
+      center: [latitude, longitude],
       zoom: 9,
       zoomControl: true,
     });
@@ -25,8 +68,9 @@ export default function MarineMap() {
       }
     ).addTo(map);
 
+    // Current location
     const currentLocation = L.circleMarker(
-      [17.6868, 83.2185],
+      [latitude, longitude],
       {
         radius: 8,
         weight: 3,
@@ -35,11 +79,12 @@ export default function MarineMap() {
     ).addTo(map);
 
     currentLocation.bindPopup(`
-      <strong>📍 Visakhapatnam</strong><br/>
-      Current operating location
+      <strong>📍 Current Location</strong><br/>
+      Operating location
     `);
 
-    fetch("/api/pfz")
+    // Real INCOIS PFZ data
+    fetch(`/api/pfz?lat=${latitude}&lon=${longitude}`)
       .then((res) => {
         if (!res.ok) {
           throw new Error("PFZ API request failed");
@@ -50,63 +95,53 @@ export default function MarineMap() {
       .then((data) => {
         if (cancelled || !data?.zones) return;
 
-        data.zones.forEach(
-          (zone: {
-            id: string;
-            latitude: number;
-            longitude: number;
-            suitability: string;
-            confidence: number;
-            distanceFromCoast: number;
-            estimatedCatchPotential: string;
-            factors?: {
-              seaSurfaceTemperature?: number;
-              chlorophyll?: number;
-              oceanCondition?: string;
-            };
-          }) => {
-            if (cancelled || !mapRef.current) return;
-
-            const radius =
-              zone.suitability === "HIGH"
-                ? 8000
-                : zone.suitability === "MODERATE"
-                ? 7000
-                : 6000;
-
-            const pfz = L.circle(
-              [zone.latitude, zone.longitude],
-              {
-                radius,
-                fillOpacity: 0.25,
-                weight: 2,
-              }
-            ).addTo(map);
-
-            pfz.bindPopup(`
-              <strong>🎣 ${zone.id}</strong><br/>
-              Suitability: ${zone.suitability}<br/>
-              Confidence: ${(zone.confidence * 100).toFixed(0)}%<br/>
-              Distance from coast: ${zone.distanceFromCoast} km<br/>
-              Catch potential: ${zone.estimatedCatchPotential}<br/>
-              ${
-                zone.factors?.seaSurfaceTemperature !== undefined
-                  ? `SST: ${zone.factors.seaSurfaceTemperature}°C<br/>`
-                  : ""
-              }
-              ${
-                zone.factors?.chlorophyll !== undefined
-                  ? `Chlorophyll: ${zone.factors.chlorophyll}<br/>`
-                  : ""
-              }
-              ${
-                zone.factors?.oceanCondition
-                  ? `Ocean: ${zone.factors.oceanCondition}`
-                  : ""
-              }
-            `);
+        data.zones.forEach((zone: PFZZone) => {
+          if (
+            cancelled ||
+            !mapRef.current ||
+            !Array.isArray(zone.geometry) ||
+            zone.geometry.length < 2
+          ) {
+            return;
           }
-        );
+
+          const line = zone.geometry.map((point) => [
+            point.latitude,
+            point.longitude,
+          ] as [number, number]);
+
+          const pfz = L.polyline(line, {
+            weight: 4,
+            opacity: 0.9,
+            dashArray: "8 6",
+          }).addTo(map);
+
+          pfz.bindPopup(`
+            <strong>🎣 Potential Fishing Zone</strong><br/>
+            <strong>ID:</strong> ${zone.id}<br/>
+            ${
+              zone.sector
+                ? `<strong>Sector:</strong> ${zone.sector}<br/>`
+                : ""
+            }
+            ${
+              zone.year
+                ? `<strong>Year:</strong> ${zone.year}<br/>`
+                : ""
+            }
+            ${
+              zone.julianDay
+                ? `<strong>Julian Day:</strong> ${zone.julianDay}<br/>`
+                : ""
+            }
+            ${
+              zone.length !== null && zone.length !== undefined
+                ? `<strong>Length:</strong> ${Number(zone.length).toFixed(2)} km<br/>`
+                : ""
+            }
+            <strong>Source:</strong> INCOIS
+          `);
+        });
       })
       .catch((error) => {
         if (!cancelled) {
@@ -114,6 +149,7 @@ export default function MarineMap() {
         }
       });
 
+    // Hazard zone
     const hazard = L.circle(
       [17.72, 83.72],
       {
@@ -130,6 +166,7 @@ export default function MarineMap() {
       Exercise caution
     `);
 
+    // Advisory
     const advisory = L.marker([17.60, 83.30]).addTo(map);
 
     advisory.bindPopup(`
@@ -138,6 +175,7 @@ export default function MarineMap() {
       Wind speed: 24 km/h
     `);
 
+    // Legend
     const legend = new L.Control({
       position: "bottomright",
     });
@@ -160,7 +198,7 @@ export default function MarineMap() {
         ">
           <strong>Marine Map</strong><br/>
           📍 Current Location<br/>
-          🎣 Fishing Zone<br/>
+          🎣 INCOIS PFZ<br/>
           ⚠️ Hazard Area
         </div>
       `;

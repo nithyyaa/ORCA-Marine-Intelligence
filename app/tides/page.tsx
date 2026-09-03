@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { marineData } from "@/lib/marine-data";
+import { useEffect, useState } from "react";
 import {
   Home,
   Bot,
@@ -23,6 +23,35 @@ import {
   Compass,
 } from "lucide-react";
 
+type Tide = {
+  type: string;
+  time: string;
+  height: number;
+};
+
+type TideApiResponse = {
+  live: boolean;
+  modelDerived?: boolean;
+  source?: string;
+  location?: string;
+  tides?: Tide[];
+  error?: string;
+};
+
+function parseTideHour(time: string) {
+  const match = time.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM)/i);
+  if (!match) return 0;
+
+  let hour = Number(match[1]);
+  const period = match[3].toUpperCase();
+
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+
+  return hour * 60 + Number(match[2]);
+}
+
+
 const navItems = [
   { label: "Dashboard", href: "/", icon: Home },
   { label: "Ask ORCA", href: "/ask-orca", icon: Bot },
@@ -38,40 +67,7 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-const tideEvents = [
-  {
-    time: "02:18 AM",
-    height: "0.7 m",
-    type: "Low Tide",
-    icon: ArrowDown,
-    accent: "text-blue-400",
-    bg: "bg-blue-400/10",
-  },
-  {
-    time: marineData.tides.nextHigh,
-    height: `${marineData.tides.highHeight} m`,
-    type: "High Tide",
-    icon: ArrowUp,
-    accent: "text-violet-400",
-    bg: "bg-violet-400/10",
-  },
-  {
-    time: "02:46 PM",
-    height: "0.8 m",
-    type: "Low Tide",
-    icon: ArrowDown,
-    accent: "text-blue-400",
-    bg: "bg-blue-400/10",
-  },
-  {
-    time: "09:04 PM",
-    height: "2.3 m",
-    type: "High Tide",
-    icon: ArrowUp,
-    accent: "text-violet-400",
-    bg: "bg-violet-400/10",
-  },
-];
+
 
 const week = [
   ["Mon", "1.9 m", "0.6 m"],
@@ -83,7 +79,7 @@ const week = [
   ["Sun", "2.3 m", "0.8 m"],
 ];
 
-function Sidebar() {
+function Sidebar({ locationName }: { locationName: string }) {
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-screen w-[272px] flex-col border-r border-white/10 bg-[#071525]">
       <div className="border-b border-white/10 px-6 py-7">
@@ -165,7 +161,7 @@ function Sidebar() {
             </p>
 
             <p className="text-xs text-slate-500">
-              {marineData.location.name}, {marineData.location.country}
+              {locationName}
             </p>
           </div>
 
@@ -177,9 +173,138 @@ function Sidebar() {
 }
 
 export default function TidesPage() {
+  const [locationName, setLocationName] = useState("Operating location");
+  const [tides, setTides] = useState<Tide[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTides() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch("/api/tide", {
+          cache: "no-store",
+        });
+
+        const data: TideApiResponse = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Unable to fetch tide data");
+        }
+
+        if (!cancelled) {
+          setLocationName(data.location || "Operating location");
+          setTides(data.tides || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Unable to fetch tide data"
+          );
+          setTides([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadTides();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const highTides = tides.filter((tide) => tide.type === "High Tide");
+  const lowTides = tides.filter((tide) => tide.type === "Low Tide");
+
+  const nextHigh = highTides[0];
+  const nextLow = lowTides[0];
+  const currentTide = tides[0];
+
+  const highHeight =
+    highTides.length > 0
+      ? Math.max(...highTides.map((tide) => tide.height))
+      : null;
+
+  const lowHeight =
+    lowTides.length > 0
+      ? Math.min(...lowTides.map((tide) => tide.height))
+      : null;
+
+  const tidalRange =
+    highHeight !== null && lowHeight !== null
+      ? highHeight - lowHeight
+      : null;
+
+  const tideDirection =
+    currentTide?.type === "High Tide"
+      ? "Rising"
+      : currentTide?.type === "Low Tide"
+        ? "Falling"
+        : "—";
+
+  const navigationStatus =
+    tidalRange === null
+      ? "—"
+      : tidalRange >= 1.5
+        ? "Favorable"
+        : tidalRange >= 0.8
+          ? "Moderate"
+          : "Limited";
+
+  const todayLabel = new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  const weekDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() + index);
+
+    return {
+      key: date.toISOString().slice(0, 10),
+      label: date.toLocaleDateString("en-IN", {
+        weekday: "short",
+      }),
+      high: "—",
+      low: "—",
+    };
+  });
+
+  // The tide API returns events in chronological order but currently
+  // exposes only local clock time. We detect midnight crossings to
+  // group the returned events into the next few calendar days.
+  let dayOffset = 0;
+  let previousMinutes = -1;
+  const groupedDays = weekDays.map((day) => ({ ...day }));
+
+  for (const event of tides) {
+    const minutes = parseTideHour(event.time);
+
+    if (previousMinutes >= 0 && minutes < previousMinutes) {
+      dayOffset += 1;
+    }
+
+    const day = groupedDays[Math.min(dayOffset, groupedDays.length - 1)];
+
+    if (event.type === "High Tide") {
+      day.high = `${event.height.toFixed(2)} m`;
+    } else if (event.type === "Low Tide") {
+      day.low = `${event.height.toFixed(2)} m`;
+    }
+
+    previousMinutes = minutes;
+  }
+
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
-      <Sidebar />
+      <Sidebar locationName={locationName} />
 
       <main className="ml-[272px] min-h-screen">
         <header className="flex h-20 items-center justify-between border-b border-white/10 bg-[#06111f] px-8">
@@ -195,7 +320,7 @@ export default function TidesPage() {
 
           <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-300">
             <MapPin size={15} className="text-violet-400" />
-            {marineData.location.name}, {marineData.location.country}
+            {locationName}
           </div>
         </header>
 
@@ -205,7 +330,7 @@ export default function TidesPage() {
 
           <div className="mb-8">
             <p className="text-sm text-slate-500">
-              Tuesday · September 1
+              {todayLabel}
             </p>
 
             <h2 className="mt-2 text-3xl font-semibold">
@@ -231,12 +356,12 @@ export default function TidesPage() {
 
                 <div className="mt-8">
                   <p className="text-sm text-slate-500">
-                    {marineData.location.name} coast
+                    {locationName} coast
                   </p>
 
                   <div className="mt-2 flex items-end gap-3">
                     <span className="text-6xl font-light">
-                      1.4
+                      {currentTide ? currentTide.height.toFixed(2) : "—"}
                     </span>
 
                     <span className="pb-2 text-lg text-slate-500">
@@ -245,13 +370,22 @@ export default function TidesPage() {
                   </div>
 
                   <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-violet-400/10 px-3 py-2 text-xs text-violet-300">
-                    <ArrowUp size={14} />
-                    Rising
+                    {currentTide?.type === "Low Tide" ? (
+                      <ArrowDown size={14} />
+                    ) : (
+                      <ArrowUp size={14} />
+                    )}
+                    {tideDirection}
                   </div>
 
                   <p className="mt-6 text-sm leading-6 text-slate-500">
-                    Water level is currently rising toward the next
-                    high tide.
+                    {loading
+                      ? "Loading live marine tide data..."
+                      : error
+                        ? error
+                        : currentTide
+                          ? `The next model-derived tide event is ${currentTide.type.toLowerCase()} at ${currentTide.time}.`
+                          : "No tide events are currently available."}
                   </p>
                 </div>
               </div>
@@ -331,11 +465,11 @@ export default function TidesPage() {
                   </p>
 
                   <p className="mt-1 font-medium">
-                    {marineData.tides.nextHigh}
+                    {nextHigh?.time || "—"}
                   </p>
 
                   <p className="text-xs text-violet-400">
-                    {marineData.tides.highHeight} m
+                    {nextHigh ? `${nextHigh.height.toFixed(2)} m` : "—"}
                   </p>
                 </div>
               </div>
@@ -363,43 +497,70 @@ export default function TidesPage() {
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {tideEvents.map((event) => {
-                const Icon = event.icon;
+              {loading ? (
+                <div className="col-span-full rounded-2xl border border-white/10 bg-[#091827]/70 p-8 text-center text-sm text-slate-500">
+                  Loading tide events...
+                </div>
+              ) : error ? (
+                <div className="col-span-full rounded-2xl border border-red-400/10 bg-red-400/[0.03] p-8 text-center text-sm text-red-300">
+                  {error}
+                </div>
+              ) : tides.length === 0 ? (
+                <div className="col-span-full rounded-2xl border border-white/10 bg-[#091827]/70 p-8 text-center text-sm text-slate-500">
+                  No tide events available.
+                </div>
+              ) : (
+                tides.slice(0, 4).map((event) => {
+                  const isHigh = event.type === "High Tide";
 
-                return (
-                  <div
-                    key={event.time}
-                    className="rounded-2xl border border-white/10 bg-[#091827]/70 p-5 transition hover:-translate-y-1 hover:border-violet-400/20"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div
-                        className={`flex h-10 w-10 items-center justify-center rounded-xl ${event.bg}`}
-                      >
-                        <Icon
-                          size={19}
-                          className={event.accent}
-                        />
+                  return (
+                    <div
+                      key={`${event.type}-${event.time}`}
+                      className="rounded-2xl border border-white/10 bg-[#091827]/70 p-5 transition hover:-translate-y-1 hover:border-violet-400/20"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div
+                          className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                            isHigh ? "bg-violet-400/10" : "bg-blue-400/10"
+                          }`}
+                        >
+                          {isHigh ? (
+                            <ArrowUp
+                              size={19}
+                              className="text-violet-400"
+                            />
+                          ) : (
+                            <ArrowDown
+                              size={19}
+                              className="text-blue-400"
+                            />
+                          )}
+                        </div>
+
+                        <span className="text-xs text-slate-600">
+                          Upcoming
+                        </span>
                       </div>
 
-                      <span className="text-xs text-slate-600">
-                        Today
-                      </span>
+                      <p className="mt-6 text-sm text-slate-500">
+                        {event.type}
+                      </p>
+
+                      <p className="mt-1 text-2xl font-semibold">
+                        {event.time}
+                      </p>
+
+                      <p
+                        className={`mt-2 text-sm ${
+                          isHigh ? "text-violet-400" : "text-blue-400"
+                        }`}
+                      >
+                        {event.height.toFixed(2)} m
+                      </p>
                     </div>
-
-                    <p className="mt-6 text-sm text-slate-500">
-                      {event.type}
-                    </p>
-
-                    <p className="mt-1 text-2xl font-semibold">
-                      {event.time}
-                    </p>
-
-                    <p className={`mt-2 text-sm ${event.accent}`}>
-                      {event.height}
-                    </p>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -417,10 +578,7 @@ export default function TidesPage() {
               </p>
 
               <p className="mt-1 text-3xl font-semibold">
-                {(
-                  marineData.tides.highHeight -
-                  marineData.tides.lowHeight
-                ).toFixed(1)}{" "}
+                {tidalRange !== null ? tidalRange.toFixed(2) : "—"}{" "}
                 m
               </p>
 
@@ -430,11 +588,11 @@ export default function TidesPage() {
 
               <div className="mt-3 flex justify-between text-[11px] text-slate-600">
                 <span>
-                  {marineData.tides.lowHeight} m low
+                  {lowHeight !== null ? `${lowHeight.toFixed(2)} m low` : "— low"}
                 </span>
 
                 <span>
-                  {marineData.tides.highHeight} m high
+                  {nextHigh ? `${nextHigh.height.toFixed(2)} m` : "—"} high
                 </span>
               </div>
             </div>
@@ -449,11 +607,13 @@ export default function TidesPage() {
               </p>
 
               <p className="mt-1 text-3xl font-semibold">
-                Rising
+                {tideDirection}
               </p>
 
               <p className="mt-3 text-sm text-slate-500">
-                Current flow is moving toward high tide.
+                {currentTide
+                  ? `The next model-derived event is ${currentTide.type.toLowerCase()} at ${currentTide.time}.`
+                  : "No current tide trend is available."}
               </p>
             </div>
 
@@ -470,12 +630,13 @@ export default function TidesPage() {
               </p>
 
               <p className="mt-1 text-xl font-semibold text-violet-300">
-                Favorable
+                {navigationStatus}
               </p>
 
               <p className="mt-3 text-sm leading-5 text-slate-500">
-                Suitable tidal conditions expected around the next
-                high-water period.
+                {nextHigh
+                  ? `Next high water is expected at ${nextHigh.time}.`
+                  : "Tidal conditions are currently unavailable."}
               </p>
             </div>
           </div>
@@ -493,9 +654,9 @@ export default function TidesPage() {
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-[#091827]/70">
               <div className="grid grid-cols-7 divide-x divide-white/10">
-                {week.map(([day, high, low]) => (
+                {groupedDays.map(({ key, label: day, high, low }) => (
                   <div
-                    key={day}
+                    key={key}
                     className="p-4 text-center transition hover:bg-violet-400/[0.035]"
                   >
                     <p className="text-xs text-slate-500">
@@ -545,14 +706,13 @@ export default function TidesPage() {
 
                 <h3 className="mt-2 font-semibold">
                   Next high tide occurs at{" "}
-                  {marineData.tides.nextHigh}
+                  {nextHigh?.time || "—"}
                 </h3>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                  The current tide is rising. The next high-water
-                  period may provide a favorable window for coastal
-                  navigation, subject to weather and sea-state
-                  conditions.
+                  {nextHigh
+                    ? `The next model-derived high-water period is expected at ${nextHigh.time}. This may provide a useful window for coastal navigation, subject to weather and sea-state conditions.`
+                    : "Tide intelligence is currently unavailable. Check the selected operating location and try again."}
                 </p>
               </div>
             </div>

@@ -346,6 +346,7 @@ button {
 .map-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  height: 420px;
   margin-bottom: 12px;
 }
 

@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -26,8 +27,7 @@ import {
   SlidersHorizontal,
   Check,
 } from "lucide-react";
-import { useState } from "react";
-
+import { useEffect, useState } from "react";
 const navItems = [
   { label: "Dashboard", href: "/", icon: Home },
   { label: "Ask ORCA", href: "/ask-orca", icon: Bot },
@@ -170,10 +170,81 @@ export default function SettingsPage() {
   const [marineAlerts, setMarineAlerts] = useState(true);
   const [fishingAlerts, setFishingAlerts] = useState(true);
   const [location, setLocation] = useState(true);
+  const [operatingLocation, setOperatingLocation] = useState(
+    "Visakhapatnam, India"
+  );
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const [language, setLanguage] = useState("English");
   const [units, setUnits] = useState("Metric");
+
+  useEffect(() => {
+    const storedLocation = localStorage.getItem("orca-location");
+
+    if (storedLocation) {
+      try {
+        const parsed = JSON.parse(storedLocation);
+
+        if (parsed.name) {
+          setOperatingLocation(parsed.name);
+        }
+
+        setLocation(true);
+      } catch {
+        console.warn("Invalid stored ORCA location");
+      }
+    }
+  }, []);
+
+  const changeLocation = async () => {
+    const place = window.prompt(
+      "Enter your operating location",
+      operatingLocation
+    );
+
+    if (!place) return;
+
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
+          place
+        )}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Location search failed");
+      }
+
+      const results = await response.json();
+
+      if (!results.length) {
+        alert("Location not found. Please try another city.");
+        return;
+      }
+
+      const selected = results[0];
+
+      const savedLocation = {
+        name: selected.display_name,
+        latitude: Number(selected.lat),
+        longitude: Number(selected.lon),
+      };
+
+      localStorage.setItem(
+        "orca-location",
+        JSON.stringify(savedLocation)
+      );
+
+      document.cookie = `orca-location=${encodeURIComponent(
+        JSON.stringify(savedLocation)
+      )}; path=/; max-age=31536000`;
+
+      setOperatingLocation(savedLocation.name);
+      setLocation(false);
+    } catch {
+      alert("Unable to change location.");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
@@ -191,14 +262,18 @@ export default function SettingsPage() {
             </h1>
           </div>
 
-          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-300">
+          <button
+            onClick={changeLocation}
+            className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-300 transition hover:border-violet-400/40 hover:bg-violet-400/5"
+          >
             <MapPin size={15} className="text-violet-400" />
-            Visakhapatnam, India
-          </div>
+            <span className="max-w-[260px] truncate">
+              {operatingLocation}
+            </span>
+          </button>
         </header>
 
         <section className="mx-auto max-w-[1100px] px-8 py-8">
-
           <div className="mb-8">
             <h2 className="text-3xl font-semibold">
               Settings
@@ -245,14 +320,19 @@ export default function SettingsPage() {
                   Operating location
                 </label>
 
-                <div className="mt-2 flex items-center gap-3 rounded-xl border border-white/10 bg-[#071525] px-4 py-3 text-sm">
+                <button
+                  onClick={changeLocation}
+                  className="mt-2 flex w-full items-center gap-3 rounded-xl border border-white/10 bg-[#071525] px-4 py-3 text-left text-sm transition hover:border-violet-400/40 hover:bg-violet-400/5"
+                >
                   <MapPin
                     size={16}
                     className="text-violet-400"
                   />
 
-                  Visakhapatnam, India
-                </div>
+                  <span className="truncate">
+                    {operatingLocation}
+                  </span>
+                </button>
               </div>
             </div>
           </div>
@@ -322,7 +402,6 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-6 divide-y divide-white/10">
-
               <div className="flex items-center justify-between py-4">
                 <div>
                   <p className="text-sm font-medium">
@@ -390,7 +469,6 @@ export default function SettingsPage() {
                   setEnabled={setFishingAlerts}
                 />
               </div>
-
             </div>
           </div>
 
@@ -417,7 +495,6 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-6 divide-y divide-white/10">
-
               <div className="flex items-center justify-between py-4">
                 <div>
                   <p className="text-sm font-medium">
@@ -431,7 +508,54 @@ export default function SettingsPage() {
 
                 <Toggle
                   enabled={location}
-                  setEnabled={setLocation}
+                  setEnabled={(enabled) => {
+                    if (!enabled) {
+                      setLocation(false);
+                      localStorage.removeItem("orca-location");
+                      document.cookie = "orca-location=; path=/; max-age=0";
+                      setOperatingLocation("Visakhapatnam, India");
+                      return;
+                    }
+
+                    if (!navigator.geolocation) {
+                      alert(
+                        "Location services are not supported by this browser."
+                      );
+                      return;
+                    }
+
+                    navigator.geolocation.getCurrentPosition(
+                      (position) => {
+                        const savedLocation = {
+                          name: "Current Location",
+                          latitude: position.coords.latitude,
+                          longitude: position.coords.longitude,
+                        };
+
+                        localStorage.setItem(
+                          "orca-location",
+                          JSON.stringify(savedLocation)
+                        );
+
+                        document.cookie = `orca-location=${encodeURIComponent(
+                          JSON.stringify(savedLocation)
+                        )}; path=/; max-age=31536000`;
+
+                        setOperatingLocation("Current Location");
+                        setLocation(true);
+                      },
+                      () => {
+                        alert(
+                          "Unable to access your current location."
+                        );
+                      },
+                      {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0,
+                      }
+                    );
+                  }}
                 />
               </div>
 
@@ -451,14 +575,12 @@ export default function SettingsPage() {
                   setEnabled={setAutoRefresh}
                 />
               </div>
-
             </div>
           </div>
 
           {/* UNITS */}
 
           <div className="mt-5 grid gap-5 md:grid-cols-2">
-
             <div className="rounded-2xl border border-white/10 bg-[#091827] p-6">
               <div className="flex items-center gap-3">
                 <SlidersHorizontal
@@ -527,7 +649,6 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-
           </div>
 
           {/* DATA */}
@@ -553,7 +674,6 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
-
               <div className="rounded-xl border border-white/10 bg-[#071525] p-4">
                 <p className="text-xs text-slate-600">
                   Satellite data
@@ -595,7 +715,6 @@ export default function SettingsPage() {
                   Available
                 </p>
               </div>
-
             </div>
           </div>
 
@@ -642,9 +761,10 @@ export default function SettingsPage() {
               Saved
             </div>
           </div>
-
         </section>
       </main>
     </div>
   );
 }
+
+

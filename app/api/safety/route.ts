@@ -1,18 +1,34 @@
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const baseUrl = new URL(request.url).origin;
+    const cookie = request.headers.get("cookie") ?? "";
+
+    const fetchOptions = {
+      cache: "no-store" as const,
+      headers: {
+        Cookie: cookie,
+      },
+    };
+
     const [weatherRes, oceanRes, tideRes] = await Promise.all([
-      fetch("http://localhost:3001/api/weather", {
-        cache: "no-store",
-      }),
-      fetch("http://localhost:3001/api/ocean", {
-        cache: "no-store",
-      }),
-      fetch("http://localhost:3001/api/tide", {
-        cache: "no-store",
-      }),
+      fetch(`${baseUrl}/api/weather`, fetchOptions),
+      fetch(`${baseUrl}/api/ocean`, fetchOptions),
+      fetch(`${baseUrl}/api/tide`, fetchOptions),
     ]);
+
+    if (!weatherRes.ok) {
+      throw new Error(`Weather API failed: ${weatherRes.status}`);
+    }
+
+    if (!oceanRes.ok) {
+      throw new Error(`Ocean API failed: ${oceanRes.status}`);
+    }
+
+    if (!tideRes.ok) {
+      throw new Error(`Tide API failed: ${tideRes.status}`);
+    }
 
     const weather = await weatherRes.json();
     const ocean = await oceanRes.json();
@@ -41,7 +57,11 @@ export async function GET() {
 
     return NextResponse.json({
       live: true,
-      location: "Visakhapatnam, India",
+
+      location: weather.location,
+      latitude: weather.latitude,
+      longitude: weather.longitude,
+
       risk,
       safetyScore: score,
       recommendation,
@@ -49,17 +69,28 @@ export async function GET() {
       conditions: {
         windSpeed,
         waveHeight,
-        seaSurfaceTemperature:
-          ocean.seaSurfaceTemperature ?? null,
+        seaSurfaceTemperature: ocean.sst ?? null,
       },
 
-      tideAvailable: tide.tides?.length > 0,
+      tideAvailable:
+        Array.isArray(tide.tides) && tide.tides.length > 0,
+
+      source: {
+        weather: weather.source,
+        ocean: ocean.source,
+        tide: tide.source,
+      },
     });
-  } catch {
+  } catch (error) {
+    console.error("Safety API error:", error);
+
     return NextResponse.json(
       {
         live: false,
-        error: "Unable to calculate marine safety conditions",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to calculate marine safety conditions",
       },
       { status: 500 }
     );

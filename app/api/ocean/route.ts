@@ -1,39 +1,75 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
 export async function GET() {
   try {
-    const url =
-      "https://marine-api.open-meteo.com/v1/marine" +
-      "?latitude=17.6868" +
-      "&longitude=83.2185" +
-      "&current=wave_height,wave_direction,wave_period,sea_surface_temperature" +
-      "&timezone=Asia%2FKolkata";
+    const cookieStore = await cookies();
+    const locationCookie = cookieStore.get("orca-location")?.value;
 
-    const res = await fetch(url, {
+    if (!locationCookie) {
+      return NextResponse.json(
+        { error: "Operating location not selected" },
+        { status: 400 }
+      );
+    }
+
+    const location = JSON.parse(decodeURIComponent(locationCookie));
+
+    if (
+      typeof location.latitude !== "number" ||
+      typeof location.longitude !== "number"
+    ) {
+      return NextResponse.json(
+        { error: "Invalid operating location" },
+        { status: 400 }
+      );
+    }
+
+    const url =
+      `https://marine-api.open-meteo.com/v1/marine` +
+      `?latitude=${location.latitude}` +
+      `&longitude=${location.longitude}` +
+      `&current=wave_height,wave_direction,wave_period,sea_surface_temperature,ocean_current_velocity,ocean_current_direction` +
+      `&timezone=auto`;
+
+    const response = await fetch(url, {
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      throw new Error("Marine API failed");
+    if (!response.ok) {
+      throw new Error("Ocean API request failed");
     }
 
-    const data = await res.json();
+    const data = await response.json();
 
     return NextResponse.json({
       live: true,
-      location: "Visakhapatnam, India",
+      location: location.name,
+      latitude: location.latitude,
+      longitude: location.longitude,
+
       waveHeight: data.current?.wave_height ?? null,
       waveDirection: data.current?.wave_direction ?? null,
       wavePeriod: data.current?.wave_period ?? null,
-      seaSurfaceTemperature:
-        data.current?.sea_surface_temperature ?? null,
+
+      sst: data.current?.sea_surface_temperature ?? null,
+
+      oceanCurrentVelocity:
+        data.current?.ocean_current_velocity ?? null,
+
+      oceanCurrentDirection:
+        data.current?.ocean_current_direction ?? null,
+
       time: data.current?.time ?? null,
+
+      source: "Open-Meteo Marine API",
     });
   } catch (error) {
+    console.error("Ocean API error:", error);
+
     return NextResponse.json(
       {
-        live: false,
-        error: "Unable to retrieve ocean conditions",
+        error: "Unable to fetch ocean data",
       },
       { status: 500 }
     );

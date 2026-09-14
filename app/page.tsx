@@ -1,7 +1,7 @@
 "use client";
-
-import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import { fuseMarineEvidence } from "@/lib/marine/data-fusion";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   Info,
   Send,
   ChevronDown,
+  BookOpen,
 } from "lucide-react";
 
 const MarineMap = dynamic(
@@ -38,7 +39,9 @@ const navItems = [
   { icon: Navigation, label: "Tides", href: "/tides" },
   { icon: Info, label: "Advisories", href: "/advisories" },
   { icon: Route, label: "Routes & Planning", href: "/routes" },
+  { icon: Navigation, label: "What-If Scenarios", href: "/scenarios" },
   { icon: FileText, label: "Reports", href: "/reports" },
+  { icon: BookOpen, label: "Knowledge Base", href: "/knowledge" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
 
@@ -175,12 +178,17 @@ function Header() {
     updateLocation();
     updateTime();
 
-    const interval = setInterval(
-      updateTime,
-      1000
-    );
+    const locationChanged = () => updateLocation();
+    window.addEventListener("orca-location-changed", locationChanged);
 
-    return () => clearInterval(interval);
+    const timeInterval = setInterval(updateTime, 1000);
+    const locationInterval = setInterval(updateLocation, 750);
+
+    return () => {
+      window.removeEventListener("orca-location-changed", locationChanged);
+      clearInterval(timeInterval);
+      clearInterval(locationInterval);
+    };
   }, []);
 
   return (
@@ -215,6 +223,10 @@ type DashboardData = {
   ocean: any;
   tide: any;
   pfz: any;
+  hazards: any;
+  geofence: any;
+  chlorophyll: any;
+  fusion: ReturnType<typeof fuseMarineEvidence> | null;
 };
 
 function formatValue(value: unknown, suffix = "") {
@@ -336,6 +348,34 @@ function riskLabel(score: number) {
   return "CRITICAL";
 }
 
+function sourceFreshness(value: any): { label: "FRESH" | "AGING" | "UNAVAILABLE"; className: string } {
+  if (!value) return { label: "UNAVAILABLE", className: "red" };
+  const explicit = String(value?.status ?? "").toUpperCase();
+  if (explicit === "FRESH") return { label: "FRESH", className: "green" };
+  if (explicit === "AGING") return { label: "AGING", className: "caution" };
+
+  const timestamp = value?.timestamp ?? value?.time ?? value?.updatedAt ?? value?.updated ?? value?.observedAt;
+  if (!timestamp) return { label: "FRESH", className: "green" };
+  const parsed = new Date(String(timestamp));
+  if (Number.isNaN(parsed.getTime())) return { label: "FRESH", className: "green" };
+  const ageMinutes = (Date.now() - parsed.getTime()) / 60000;
+  if (ageMinutes <= 60) return { label: "FRESH", className: "green" };
+  if (ageMinutes <= 180) return { label: "AGING", className: "caution" };
+  return { label: "UNAVAILABLE", className: "red" };
+}
+
+function FreshBadge({ value }: { value: any }) {
+  const status = sourceFreshness(value);
+  return <span className={`stat-small ${status.className}`}>{status.label}</span>;
+}
+
+function chlorophyllDisplay(chlorophyll: any) {
+  if (chlorophyll?.value !== undefined && chlorophyll?.value !== null) {
+    return `${Number(chlorophyll.value).toFixed(2)} mg/m³`;
+  }
+  return "Unavailable";
+}
+
 function Stats({ data }: { data: DashboardData | null }) {
   const safetyScore = deriveRiskFromData(
     data?.safety,
@@ -351,12 +391,6 @@ function Stats({ data }: { data: DashboardData | null }) {
       : "SAFE";
 
   const pfz = getPfzInfo(data?.pfz);
-  const alertCount = [
-    Number(data?.weather?.windSpeed) > 20,
-    Number(data?.ocean?.waveHeight) > 1.5,
-    risk === "HIGH" || risk === "CRITICAL",
-  ].filter(Boolean).length;
-
   return (
     <div className="stats">
       <div className="card stat-card">
@@ -433,19 +467,19 @@ function Stats({ data }: { data: DashboardData | null }) {
       </div>
 
       <div className="card stat-card">
-        <div className="stat-title">
-          Active Alerts
-        </div>
-
+        <div className="stat-title">Active Hazards</div>
         <div className="stat-value red">
-          {data ? alertCount : "—"}
+          {data ? (Array.isArray(data.hazards?.hazards) ? data.hazards.hazards.length : 0) : "—"}
         </div>
-
         <div className="stat-small">
-          <span className="green">
-            View Alerts →
-          </span>
+          {data?.hazards?.live ? "Live hazard feed" : "No live hazard data"}
         </div>
+      </div>
+
+      <div className="card stat-card">
+        <div className="stat-title">Chlorophyll</div>
+        <div className="stat-value">{chlorophyllDisplay(data?.chlorophyll)}</div>
+        <div className="stat-small">Historical prototype source</div>
       </div>
     </div>
   );
@@ -454,23 +488,41 @@ function Stats({ data }: { data: DashboardData | null }) {
 function Recommendation({ data }: { data: DashboardData | null }) {
   const windSpeed = data?.weather?.windSpeed;
   const waveHeight = data?.ocean?.waveHeight;
+
   const safetyScore = deriveRiskFromData(
     data?.safety,
     data?.weather,
     data?.ocean
   );
+
   const risk = data?.safety?.risk ?? riskLabel(safetyScore);
+
+  const confidence =
+    data?.safety?.confidence ??
+    data?.safety?.confidenceScore ??
+    "Unavailable";
+
+  const generatedAt =
+    data?.safety?.generatedAt ??
+    data?.safety?.timestamp ??
+    data?.weather?.generatedAt ??
+    data?.weather?.timestamp ??
+    null;
 
   const reasons = [
     [
       "Wave Height",
       formatValue(waveHeight, " m"),
-      typeof waveHeight === "number" && waveHeight > 1.5 ? "up" : "ok",
+      typeof waveHeight === "number" && waveHeight > 1.5
+        ? "up"
+        : "ok",
     ],
     [
       "Wind Speed",
       formatValue(windSpeed, " km/h"),
-      typeof windSpeed === "number" && windSpeed > 20 ? "up" : "ok",
+      typeof windSpeed === "number" && windSpeed > 20
+        ? "up"
+        : "ok",
     ],
     [
       "Tide",
@@ -482,8 +534,16 @@ function Recommendation({ data }: { data: DashboardData | null }) {
       data?.weather ? "Forecast available" : "Unavailable",
       data?.weather ? "ok" : "up",
     ],
-    ["Lightning Risk", "Unavailable", "up"],
-    ["Cyclone Warning", "Unavailable", "up"],
+    [
+      "Lightning Risk",
+      "Unavailable",
+      "up",
+    ],
+    [
+      "Cyclone Warning",
+      "Unavailable",
+      "up",
+    ],
   ];
 
   const status =
@@ -501,12 +561,41 @@ function Recommendation({ data }: { data: DashboardData | null }) {
       ? "Exercise caution and monitor marine conditions before departure."
       : "Current marine conditions appear favourable based on available data.");
 
+  const explanation =
+    risk === "CRITICAL" || risk === "HIGH"
+      ? "The recommendation is driven by elevated marine risk factors in the available observations and forecast data."
+      : risk === "MODERATE"
+      ? "The recommendation is based on the available wind, wave, tide and weather conditions. Some hazard inputs are currently unavailable."
+      : "The recommendation is based on the currently available marine conditions for the selected location.";
+
+  const sourceList = [
+    data?.weather ? "Open-Meteo Weather" : null,
+    data?.ocean ? "Open-Meteo Marine" : null,
+    data?.tide ? "Open-Meteo Marine Tide" : null,
+    data?.safety ? "ORCA Safety Model" : null,
+  ].filter(Boolean);
+
+  const waveValue =
+    typeof waveHeight === "number" ? Math.max(0, waveHeight) : null;
+
+  const windValue =
+    typeof windSpeed === "number" ? Math.max(0, windSpeed) : null;
+
+  const waveBar =
+    waveValue === null
+      ? 0
+      : Math.min(100, (waveValue / 2.5) * 100);
+
+  const windBar =
+    windValue === null
+      ? 0
+      : Math.min(100, (windValue / 40) * 100);
+
   return (
     <div className="card recommendation">
       <div className="panel-heading">
         <span>
-          ORCA Recommendation{" "}
-          <Info size={12} />
+          ORCA Recommendation <Info size={12} />
         </span>
 
         <span className="status-pill">
@@ -519,41 +608,181 @@ function Recommendation({ data }: { data: DashboardData | null }) {
       </div>
 
       <div className="recommendation-description">
-        Based on the marine data currently available for the selected location.
+        {explanation}
       </div>
 
       <div className="divider" />
 
       <div className="reasons-title">
-        <span>Key Reasons</span>
+        <span>Why this recommendation?</span>
+      </div>
+
+      {reasons.map(([name, value, statusValue]) => (
+        <div className="metric" key={name}>
+          <span>{name}</span>
+
+          <span className="metric-value">
+            {value}{" "}
+            {statusValue === "up" ? (
+              <span className="red">↑</span>
+            ) : (
+              <span className="green">✓</span>
+            )}
+          </span>
+        </div>
+      ))}
+
+      <div className="divider" />
+
+      <div className="reasons-title">
+        <span>Visual Evidence</span>
+      </div>
+
+      <div style={{ marginTop: "12px" }}>
+        <div style={{ marginBottom: "14px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "6px",
+              fontSize: "12px",
+            }}
+          >
+            <span className="muted">Wave Height</span>
+            <span>
+              {waveValue !== null
+                ? `${waveValue.toFixed(2)} m`
+                : "Unavailable"}
+            </span>
+          </div>
+
+          <div
+            style={{
+              position: "relative",
+              height: "7px",
+              borderRadius: "999px",
+              background: "rgba(255,255,255,0.08)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${waveBar}%`,
+                height: "100%",
+                borderRadius: "999px",
+                background:
+                  waveValue !== null && waveValue > 1.5
+                    ? "#ef4444"
+                    : "#22c55e",
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              marginTop: "5px",
+              fontSize: "10px",
+              color: "#64748b",
+            }}
+          >
+            Caution threshold: 1.5 m
+          </div>
+        </div>
+
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "6px",
+              fontSize: "12px",
+            }}
+          >
+            <span className="muted">Wind Speed</span>
+            <span>
+              {windValue !== null
+                ? `${windValue.toFixed(1)} km/h`
+                : "Unavailable"}
+            </span>
+          </div>
+
+          <div
+            style={{
+              position: "relative",
+              height: "7px",
+              borderRadius: "999px",
+              background: "rgba(255,255,255,0.08)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${windBar}%`,
+                height: "100%",
+                borderRadius: "999px",
+                background:
+                  windValue !== null && windValue > 20
+                    ? "#ef4444"
+                    : "#22c55e",
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              marginTop: "5px",
+              fontSize: "10px",
+              color: "#64748b",
+            }}
+          >
+            Caution threshold: 20 km/h
+          </div>
+        </div>
+      </div>
+
+      <div className="divider" />
+
+      <div className="reasons-title">
+        <span>Confidence</span>
         <span className="details">
-          View Details →
+          {typeof confidence === "number"
+            ? `${confidence}%`
+            : confidence}
         </span>
       </div>
 
-      {reasons.map(
-        ([name, value, statusValue]) => (
-          <div
-            className="metric"
-            key={name}
-          >
-            <span>{name}</span>
+      <div className="recommendation-description">
+        Confidence reflects the availability of the inputs used by the
+        ORCA safety assessment.
+      </div>
 
+      <div className="divider" />
+
+      <div className="reasons-title">
+        <span>Sources</span>
+      </div>
+
+      {sourceList.length > 0 ? (
+        sourceList.map((source) => (
+          <div className="metric" key={String(source)}>
+            <span>{source}</span>
             <span className="metric-value">
-              {value}{" "}
-              {statusValue === "up" ? (
-                <span className="red">
-                  ↑
-                </span>
-              ) : (
-                <span className="green">
-                  ✓
-                </span>
-              )}
+              Available <span className="green">✓</span>
             </span>
           </div>
-        )
+        ))
+      ) : (
+        <div className="recommendation-description">
+          Source information unavailable.
+        </div>
       )}
+
+      <div className="recommendation-description">
+        Timestamp:{" "}
+        {generatedAt
+          ? new Date(String(generatedAt)).toLocaleString("en-IN")
+          : "Unavailable"}
+      </div>
     </div>
   );
 }
@@ -602,6 +831,7 @@ function LowerCards({ data }: { data: DashboardData | null }) {
         title="Ocean Conditions"
         subtitle="Current"
       >
+        <FreshBadge value={ocean} />
         <div className="metric">
           <span>〰 Wave Height</span>
           <span>
@@ -611,6 +841,13 @@ function LowerCards({ data }: { data: DashboardData | null }) {
             ) : (
               <span className="green">✓</span>
             )}
+          </span>
+        </div>
+
+        <div className="metric">
+          <span>↗ Wave Direction</span>
+          <span>
+            {formatValue(ocean?.waveDirection, "°")}
           </span>
         </div>
 
@@ -627,6 +864,11 @@ function LowerCards({ data }: { data: DashboardData | null }) {
           <span>
             {formatValue(ocean?.sst, " °C")}
           </span>
+        </div>
+
+        <div className="metric">
+          <span>🟢 Chlorophyll</span>
+          <span>{chlorophyllDisplay(data?.chlorophyll)}</span>
         </div>
 
         <div className="metric">
@@ -648,6 +890,7 @@ function LowerCards({ data }: { data: DashboardData | null }) {
         title="Weather Forecast"
         subtitle="Current"
       >
+        <FreshBadge value={weather} />
         <div className="metric">
           <span>〰 Wind Speed</span>
 
@@ -694,6 +937,7 @@ function LowerCards({ data }: { data: DashboardData | null }) {
         title="Tide Information"
         subtitle="Available tide events"
       >
+        <FreshBadge value={data?.tide} />
         <div className="tide-chart">
           <div className="wave" />
 
@@ -816,6 +1060,165 @@ function Alerts({ data }: { data: DashboardData | null }) {
   );
 }
 
+function freshnessFromData(value: any, kind: string) {
+  if (!value) return { status: "UNAVAILABLE", ageMinutes: null };
+
+  const explicit = String(value?.status ?? "").toUpperCase();
+  if (explicit === "FRESH" || explicit === "AGING" || explicit === "UNAVAILABLE") {
+    return {
+      status: explicit,
+      ageMinutes: Number.isFinite(Number(value?.ageMinutes)) ? Number(value.ageMinutes) : null,
+    };
+  }
+
+  // Geofence uses a static Marine Regions dataset. Its dataset date is the
+  // authoritative freshness marker, so an older dataset is shown as AGING.
+  if (kind === "Geofence" && value?.datasetDate) {
+    const t = new Date(String(value.datasetDate)).getTime();
+    if (Number.isFinite(t)) {
+      const ageMinutes = Math.max(0, (Date.now() - t) / 60000);
+      return { status: "AGING", ageMinutes };
+    }
+  }
+
+  const timestamp =
+    value?.timestamp ??
+    value?.time?.marine ??
+    value?.time?.weather ??
+    value?.time ??
+    value?.updatedAt ??
+    value?.updated ??
+    value?.observedAt;
+
+  if (timestamp) {
+    const t = new Date(String(timestamp)).getTime();
+    if (Number.isFinite(t)) {
+      const ageMinutes = Math.max(0, (Date.now() - t) / 60000);
+      return { status: ageMinutes <= 60 ? "FRESH" : "AGING", ageMinutes };
+    }
+  }
+
+  // Live endpoints without a timestamp still provide source-backed data.
+  // The Tide API explicitly marks its model-derived forecast as live.
+  if (kind === "Tide" && value?.live === true) {
+    return { status: "FRESH", ageMinutes: null };
+  }
+
+  if (kind === "PFZ" || kind === "Hazards") {
+    if (kind === "Hazards" && value?.live === false) {
+      return { status: "UNAVAILABLE", ageMinutes: null };
+    }
+    return { status: "FRESH", ageMinutes: null };
+  }
+
+  return { status: "UNAVAILABLE", ageMinutes: null };
+}
+
+function formatFreshnessAge(ageMinutes: number | null) {
+  if (ageMinutes === null) return "";
+  if (ageMinutes < 60) return ` · ${Math.round(ageMinutes)} min ago`;
+  if (ageMinutes < 1440) return ` · ${Math.round(ageMinutes / 60)} hr ago`;
+  return ` · ${Math.round(ageMinutes / 1440)} days ago`;
+}
+
+function DataFreshness({ data }: { data: DashboardData | null }) {
+  const freshness = data?.safety?.dataFreshness;
+
+  const items = [
+    { name: "Weather", item: freshness?.weather ?? data?.weather },
+    { name: "Ocean", item: freshness?.ocean ?? data?.ocean },
+    { name: "Tide", item: freshness?.tide ?? data?.tide },
+    { name: "Geofence", item: data?.geofence ?? freshness?.geofence },
+    { name: "PFZ", item: data?.pfz },
+    { name: "Hazards", item: data?.hazards },
+  ];
+
+  return (
+    <div className="card sources">
+      <span className="source-title">
+        Data Freshness
+      </span>
+
+      {items.map(({ name, item }) => {
+        const freshness = freshnessFromData(item, name);
+        const className =
+          freshness.status === "FRESH"
+            ? "green"
+            : freshness.status === "AGING"
+              ? "caution"
+              : "red";
+
+        return (
+          <span className="source" key={name}>
+            <strong>{name}:</strong>{" "}
+            <span className={className}>{freshness.status}</span>
+            {formatFreshnessAge(freshness.ageMinutes)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function DataFusion({ data }: { data: DashboardData | null }) {
+  const fusion = data?.fusion;
+
+  if (!fusion) {
+    return (
+      <div className="card sources">
+        <span className="source-title">Multi-Source Data Fusion</span>
+        <span className="source">
+          Fusion status: <span className="red">UNAVAILABLE</span>
+        </span>
+      </div>
+    );
+  }
+
+  const statusClass =
+    fusion.status === "AVAILABLE"
+      ? "green"
+      : fusion.status === "PARTIAL"
+        ? "caution"
+        : "red";
+
+  return (
+    <div className="card sources">
+      <span className="source-title">Multi-Source Data Fusion</span>
+
+      <div className="metric">
+        <span>Overall fusion</span>
+        <span className={statusClass}>{fusion.status}</span>
+      </div>
+
+      <div className="metric">
+        <span>Safety relationship</span>
+        <span>{fusion.safety.relationship}</span>
+      </div>
+
+      <div className="metric">
+        <span>Fishing relationship</span>
+        <span>{fusion.fishing.relationship}</span>
+      </div>
+
+      <div className="metric">
+        <span>Route-risk relationship</span>
+        <span>{fusion.routeRisk.relationship}</span>
+      </div>
+
+      {fusion.evidence.map((item) => (
+        <div className="source" key={item}>
+          {item}
+        </div>
+      ))}
+
+      <div className="source">
+        Sources: {fusion.sources.filter((source) => source.status !== "UNAVAILABLE").length}/
+        {fusion.sources.length} available
+      </div>
+    </div>
+  );
+}
+
 function DataSources() {
   return (
     <div className="card sources">
@@ -846,10 +1249,223 @@ function DataSources() {
       <span className="source">
         OpenStreetMap
       </span>
+      <span className="source">
+        Chlorophyll: <span className="caution">Historical prototype</span>
+      </span>
 
       <button className="more-source">
         + More
       </button>
+    </div>
+  );
+}
+function GeofenceStatus() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadGeofence() {
+      try {
+        const savedLocation = localStorage.getItem("orca-location");
+
+        if (!savedLocation) {
+          throw new Error("No location selected");
+        }
+
+        const location = JSON.parse(savedLocation);
+
+        const response = await fetch(
+          `/api/geofence?lat=${encodeURIComponent(
+            location.latitude
+          )}&lon=${encodeURIComponent(location.longitude)}`
+        );
+
+        const result = await response.json();
+        setData(result);
+      } catch (error) {
+        console.error("Geofence request failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadGeofence();
+
+    const locationChanged = () => loadGeofence();
+    window.addEventListener("orca-location-changed", locationChanged);
+
+    const interval = setInterval(loadGeofence, 30000);
+
+    return () => {
+      window.removeEventListener("orca-location-changed", locationChanged);
+      clearInterval(interval);
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="card geofence-card">
+        <div className="geofence-loading">
+          <div className="geofence-loading-dot" />
+          <div>
+            <div className="geofence-label">
+              GEOFENCE STATUS
+            </div>
+            <div className="geofence-loading-text">
+              Checking maritime boundary...
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data?.success) {
+    return (
+      <div className="card geofence-card">
+        <div className="geofence-error">
+          <div className="geofence-label">
+            GEOFENCE STATUS
+          </div>
+
+          <strong>
+            Unable to check maritime boundary
+          </strong>
+        </div>
+      </div>
+    );
+  }
+
+  const inside = data.insideEEZ;
+  const warning = data.warning ?? "UNKNOWN";
+
+  return (
+    <div className={`card geofence-card ${inside ? "geofence-inside" : "geofence-outside"}`}>
+
+      {/* HEADER */}
+      <div className="geofence-header">
+
+        <div className="geofence-title-group">
+          <div className="geofence-label">
+            GEOFENCE STATUS
+          </div>
+
+          <div className="geofence-location-status">
+            <span className={`geofence-dot ${inside ? "dot-inside" : "dot-outside"}`} />
+            <span>
+              {inside ? "Maritime boundary verified" : "Outside protected maritime zone"}
+            </span>
+          </div>
+        </div>
+
+        <div className={`geofence-status-badge ${inside ? "badge-inside" : "badge-outside"}`}>
+          <span>{inside ? "✓" : "!"}</span>
+          {inside ? "INSIDE EEZ" : "OUTSIDE EEZ"}
+        </div>
+
+      </div>
+
+
+      {/* MAIN ZONE */}
+      <div className="geofence-zone">
+
+        <div className="geofence-zone-icon">
+          🌊
+        </div>
+
+        <div>
+          <div className="geofence-zone-label">
+            CURRENT MARITIME ZONE
+          </div>
+
+          <div className="geofence-zone-name">
+            {inside
+              ? data.boundary?.name ?? "Maritime Zone"
+              : "Outside EEZ"}
+          </div>
+        </div>
+
+      </div>
+
+
+      {/* METRICS */}
+      {inside && (
+        <div className="geofence-metrics">
+
+          <div className="geofence-metric">
+            <span className="geofence-metric-label">
+              Distance to boundary
+            </span>
+
+            <span className="geofence-metric-value">
+              {data.distanceToBoundaryKm !== null
+                ? `${Number(data.distanceToBoundaryKm).toFixed(2)} km`
+                : "Unavailable"}
+            </span>
+          </div>
+
+
+          <div className="geofence-metric">
+            <span className="geofence-metric-label">
+              Boundary status
+            </span>
+
+            <span className={`geofence-warning ${warning.toLowerCase()}`}>
+              {warning}
+            </span>
+          </div>
+
+        </div>
+      )}
+
+
+      {!inside && (
+        <div className="geofence-outside-message">
+          <span>!</span>
+          <div>
+            <strong>Outside Indian EEZ</strong>
+            <p>
+              The selected location is outside the detected
+              maritime boundary.
+            </p>
+          </div>
+        </div>
+      )}
+
+
+      {/* SOURCE */}
+      <div className="geofence-footer">
+
+        <div className="geofence-source">
+          <span>DATA SOURCE</span>
+          <strong>
+            {data.source ?? "Marine Regions"}
+          </strong>
+        </div>
+
+        <div className="geofence-dataset">
+          <span>DATASET</span>
+          <strong>World EEZ v12</strong>
+        </div>
+
+        {data.datasetDate && (
+          <div className="geofence-date">
+            <span>UPDATED</span>
+            <strong>
+              {new Date(data.datasetDate).toLocaleDateString(
+                "en-IN",
+                {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                }
+              )}
+            </strong>
+          </div>
+        )}
+
+      </div>
+
     </div>
   );
 }
@@ -863,6 +1479,8 @@ export default function Dashboard() {
     async function loadDashboardData() {
       try {
         let pfzUrl = "/api/pfz";
+        let hazardUrl = "/api/hazard";
+        let geofenceUrl = "/api/geofence";
 
         try {
           const locationCookie = document.cookie
@@ -883,6 +1501,12 @@ export default function Dashboard() {
               pfzUrl =
                 `/api/pfz?lat=${encodeURIComponent(location.latitude)}` +
                 `&lon=${encodeURIComponent(location.longitude)}`;
+              hazardUrl =
+                `/api/hazard?lat=${encodeURIComponent(location.latitude)}` +
+                `&lon=${encodeURIComponent(location.longitude)}`;
+              geofenceUrl =
+                `/api/geofence?lat=${encodeURIComponent(location.latitude)}` +
+                `&lon=${encodeURIComponent(location.longitude)}`;
             }
           }
         } catch {
@@ -895,9 +1519,11 @@ export default function Dashboard() {
           fetch("/api/ocean", { cache: "no-store" }),
           fetch("/api/tide", { cache: "no-store" }),
           fetch(pfzUrl, { cache: "no-store" }),
+          fetch(hazardUrl, { cache: "no-store" }),
+          fetch(geofenceUrl, { cache: "no-store" }),
         ]);
 
-        const [safety, weather, ocean, tide, pfz] = await Promise.all(
+        const [safety, weather, ocean, tide, pfz, hazards, geofence] = await Promise.all(
           responses.map(async (response) => {
             try {
               return await response.json();
@@ -914,6 +1540,21 @@ export default function Dashboard() {
             ocean,
             tide,
             pfz,
+            hazards,
+            geofence,
+            // No live chlorophyll API is connected yet. Keep this explicit
+            // so the dashboard shows Unavailable instead of inventing a value.
+            chlorophyll: null,
+            // Fuse the already-fetched live service outputs. The fusion layer
+            // does not fetch data or invent missing measurements.
+            fusion: fuseMarineEvidence({
+              weather,
+              ocean,
+              tide,
+              hazards,
+              geofence,
+              pfz,
+            }),
           });
         }
       } catch (error) {
@@ -923,11 +1564,41 @@ export default function Dashboard() {
 
     loadDashboardData();
 
-    const interval = setInterval(loadDashboardData, 30000);
+    let lastLocationKey = "";
+    const readLocationKey = () => {
+      try {
+        const raw = localStorage.getItem("orca-location");
+        if (!raw) return "default";
+        const location = JSON.parse(raw);
+        return `${location?.latitude ?? ""},${location?.longitude ?? ""}`;
+      } catch {
+        return "default";
+      }
+    };
+
+    lastLocationKey = readLocationKey();
+
+    const refreshForLocationChange = () => {
+      lastLocationKey = readLocationKey();
+      loadDashboardData();
+    };
+
+    window.addEventListener("orca-location-changed", refreshForLocationChange);
+
+    const dataInterval = setInterval(loadDashboardData, 30000);
+    const locationInterval = setInterval(() => {
+      const nextLocationKey = readLocationKey();
+      if (nextLocationKey !== lastLocationKey) {
+        lastLocationKey = nextLocationKey;
+        loadDashboardData();
+      }
+    }, 750);
 
     return () => {
       active = false;
-      clearInterval(interval);
+      window.removeEventListener("orca-location-changed", refreshForLocationChange);
+      clearInterval(dataInterval);
+      clearInterval(locationInterval);
     };
   }, []);
 
@@ -942,11 +1613,17 @@ export default function Dashboard() {
           <div className="left-content">
             <Stats data={dashboardData} />
 
-            <div className="map-row">
-              <MarineMap />
-            </div>
+<GeofenceStatus />
+
+<div className="map-row">
+  <MarineMap />
+</div>
 
             <LowerCards data={dashboardData} />
+
+            <DataFreshness data={dashboardData} />
+
+            <DataFusion data={dashboardData} />
 
             <DataSources />
           </div>

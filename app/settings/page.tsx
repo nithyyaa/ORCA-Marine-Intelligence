@@ -170,9 +170,7 @@ export default function SettingsPage() {
   const [marineAlerts, setMarineAlerts] = useState(true);
   const [fishingAlerts, setFishingAlerts] = useState(true);
   const [location, setLocation] = useState(true);
-  const [operatingLocation, setOperatingLocation] = useState(
-    "Visakhapatnam, India"
-  );
+  const [operatingLocation, setOperatingLocation] = useState("Location not set");
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const [language, setLanguage] = useState("English");
@@ -196,38 +194,28 @@ export default function SettingsPage() {
     }
   }, []);
 
-  const changeLocation = async () => {
-    const place = window.prompt(
-      "Enter your operating location",
-      operatingLocation
-    );
+ const changeLocation = async () => {
+  const place = window.prompt(
+    "Enter your operating location",
+    operatingLocation
+  );
 
-    if (!place) return;
+  if (!place) return;
 
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-          place
-        )}`
-      );
-
-      if (!response.ok) {
-        throw new Error("Location search failed");
-      }
-
-      const results = await response.json();
-
-      if (!results.length) {
-        alert("Location not found. Please try another city.");
-        return;
-      }
-
-      const selected = results[0];
-
+  try {
+    /*
+     * Special offshore test location.
+     *
+     * Nominatim may resolve "Bay of Bengal" to a
+     * coastal/land coordinate near Visakhapatnam.
+     * For ORCA geofencing, we use a known offshore
+     * coordinate inside the Indian EEZ instead.
+     */
+    if (place.trim().toLowerCase() === "bay of bengal") {
       const savedLocation = {
-        name: selected.display_name,
-        latitude: Number(selected.lat),
-        longitude: Number(selected.lon),
+        name: "Bay of Bengal",
+        latitude: 17.6935526,
+        longitude: 83.5,
       };
 
       localStorage.setItem(
@@ -240,11 +228,53 @@ export default function SettingsPage() {
       )}; path=/; max-age=31536000`;
 
       setOperatingLocation(savedLocation.name);
-      setLocation(false);
-    } catch {
-      alert("Unable to change location.");
+      setLocation(true);
+      window.dispatchEvent(new Event("orca-location-changed"));
+
+      return;
     }
-  };
+
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
+        place
+      )}`
+    );
+
+    if (!response.ok) {
+      throw new Error("Location search failed");
+    }
+
+    const results = await response.json();
+
+    if (!results.length) {
+      alert("Location not found. Please try another city.");
+      return;
+    }
+
+    const selected = results[0];
+
+    const savedLocation = {
+      name: selected.display_name,
+      latitude: Number(selected.lat),
+      longitude: Number(selected.lon),
+    };
+
+    localStorage.setItem(
+      "orca-location",
+      JSON.stringify(savedLocation)
+    );
+
+    document.cookie = `orca-location=${encodeURIComponent(
+      JSON.stringify(savedLocation)
+    )}; path=/; max-age=31536000`;
+
+    setOperatingLocation(savedLocation.name);
+    setLocation(true);
+    window.dispatchEvent(new Event("orca-location-changed"));
+  } catch {
+    alert("Unable to change location.");
+  }
+};
 
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
@@ -513,7 +543,7 @@ export default function SettingsPage() {
                       setLocation(false);
                       localStorage.removeItem("orca-location");
                       document.cookie = "orca-location=; path=/; max-age=0";
-                      setOperatingLocation("Visakhapatnam, India");
+                      setOperatingLocation("Location not set");
                       return;
                     }
 

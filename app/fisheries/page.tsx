@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import Link from "next/link";
 import { marineData } from "@/lib/marine-data";
 import {
@@ -38,7 +40,51 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-const fishingZones = marineData.fisheries;
+type PFZZone = {
+  zone_id: string;
+  latitude: number;
+  longitude: number;
+  sector?: string | null;
+  year?: number | null;
+  julian_day?: string | null;
+  length_km?: number | null;
+  source?: string | null;
+  distance_km?: string | number;
+};
+
+type FishingZone = {
+  rank: number;
+  id: string;
+  intelligence?: {
+    unavailable?: boolean;
+    reason?: string;
+    safetyScore?: number;
+    safetyRisk?: string;
+    safetyConfidence?: number;
+    suitabilityScore?: number;
+    suitability?: "Favorable" | "Moderate" | "Caution";
+    conditions?: {
+      windSpeed: number | null;
+      waveHeight: number | null;
+      rainfall: number | null;
+      seaState: string | null;
+      sst: number | null;
+    };
+  };
+  name: string;
+  distance: string;
+  direction: string;
+  suitability: "High" | "Moderate";
+  sst: string;
+  chlorophyll: string;
+  safety: string;
+  latitude: number;
+  longitude: number;
+  year?: number | null;
+  julianDay?: string | null;
+  lengthKm?: number | null;
+  source?: string | null;
+};
 
 function Sidebar() {
   return (
@@ -174,7 +220,251 @@ function StatCard({
   );
 }
 
+function getDirection(
+  fromLat: number,
+  fromLon: number,
+  toLat: number,
+  toLon: number
+) {
+  const dLon = toLon - fromLon;
+  const dLat = toLat - fromLat;
+
+  if (Math.abs(dLat) < 0.0001 && Math.abs(dLon) < 0.0001) {
+    return "Here";
+  }
+
+  const angle = (Math.atan2(dLon, dLat) * 180) / Math.PI;
+  const normalized = (angle + 360) % 360;
+
+  if (normalized >= 337.5 || normalized < 22.5) return "North";
+  if (normalized < 67.5) return "Northeast";
+  if (normalized < 112.5) return "East";
+  if (normalized < 157.5) return "Southeast";
+  if (normalized < 202.5) return "South";
+  if (normalized < 247.5) return "Southwest";
+  if (normalized < 292.5) return "West";
+  return "Northwest";
+}
+
+function normalizePFZZones(
+  zones: PFZZone[],
+  latitude: number,
+  longitude: number
+): FishingZone[] {
+  return [...zones]
+    .sort((a, b) => Number(a.distance_km ?? Number.POSITIVE_INFINITY) - Number(b.distance_km ?? Number.POSITIVE_INFINITY))
+    .map((zone, index) => {
+    const distanceNumber =
+      zone.distance_km !== undefined &&
+      zone.distance_km !== null &&
+      Number.isFinite(Number(zone.distance_km))
+        ? Number(zone.distance_km)
+        : null;
+
+    return {
+      rank: index + 1,
+      id: zone.zone_id || `PFZ-${index + 1}`,
+      name: zone.sector
+        ? `PFZ ${zone.sector}`
+        : `Potential Fishing Zone ${index + 1}`,
+      distance:
+        distanceNumber !== null
+          ? `${distanceNumber.toFixed(2)} km`
+          : "Distance unavailable",
+      direction: getDirection(
+        latitude,
+        longitude,
+        Number(zone.latitude),
+        Number(zone.longitude)
+      ),
+      suitability: "Moderate",
+      // Chlorophyll is intentionally unavailable in the prototype.
+      chlorophyll: "Unavailable",
+      // SST is not part of the PFZ zone record currently returned by the API.
+      // Keep the field present so the existing UI remains unchanged.
+      sst: "Unavailable",
+      // Safety is evaluated separately by the marine safety service.
+      safety: "Check current conditions",
+      latitude: Number(zone.latitude),
+      longitude: Number(zone.longitude),
+      year: zone.year ?? null,
+      julianDay: zone.julian_day ?? null,
+      lengthKm: zone.length_km ?? null,
+      source: zone.source ?? "INCOIS",
+    };
+  });
+}
+
 export default function FisheriesPage() {
+  const [fishingZones, setFishingZones] = useState<FishingZone[]>([]);
+  const [location, setLocation] = useState(marineData.location);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [locationVersion, setLocationVersion] = useState(0);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(false);
+  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleLocationChange = () => setLocationVersion((v) => v + 1);
+    window.addEventListener("orca-location-changed", handleLocationChange);
+    return () => window.removeEventListener("orca-location-changed", handleLocationChange);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPFZ = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        let latitude = marineData.location.latitude;
+        let longitude = marineData.location.longitude;
+
+        const storedLocation = localStorage.getItem("orca-location");
+
+        if (storedLocation) {
+          try {
+            const parsed = JSON.parse(storedLocation);
+
+            if (
+              Number.isFinite(parsed.latitude) &&
+              Number.isFinite(parsed.longitude)
+            ) {
+              latitude = parsed.latitude;
+              longitude = parsed.longitude;
+            }
+          } catch {
+            console.warn("Invalid stored ORCA location");
+          }
+        }
+
+        const response = await fetch(
+          `/api/pfz/nearby?lat=${encodeURIComponent(
+            latitude
+          )}&lon=${encodeURIComponent(longitude)}`,
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error("Unable to load nearby PFZ data");
+        }
+
+        const data = await response.json();
+
+        if (cancelled) return;
+
+        if (!Array.isArray(data?.zones)) {
+          setFishingZones([]);
+        } else {
+          setFishingZones(
+            normalizePFZZones(data.zones, latitude, longitude)
+          );
+        }
+
+        setLocation({
+          ...marineData.location,
+          latitude,
+          longitude,
+        });
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Fisheries PFZ loading error:", err);
+          setError("Unable to load nearby fishing zones.");
+          setFishingZones([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadPFZ();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locationVersion]);
+
+  useEffect(() => {
+    if (!fishingZones.length) return;
+
+    let cancelled = false;
+
+    const loadIntelligence = async () => {
+      try {
+        setIntelligenceLoading(true);
+        setIntelligenceError(null);
+
+        const response = await fetch(
+          `/api/fishing-intelligence?lat=${encodeURIComponent(location.latitude)}&lon=${encodeURIComponent(location.longitude)}`,
+          { cache: "no-store" },
+        );
+
+        if (!response.ok) throw new Error("Fishing intelligence request failed");
+        const data = await response.json();
+
+        if (cancelled || !Array.isArray(data?.zones)) return;
+
+        const intelligenceById: Record<string, FishingZone["intelligence"]> = {};
+        data.zones.forEach((zone: any) => {
+          intelligenceById[String(zone.zone_id)] = zone.intelligence;
+        });
+
+        setFishingZones((current) =>
+          current.map((zone) => ({
+            ...zone,
+            intelligence: intelligenceById[zone.id] ?? zone.intelligence,
+            suitability:
+              intelligenceById[zone.id]?.suitability === "Favorable"
+                ? "High"
+                : "Moderate",
+            safety:
+              typeof intelligenceById[zone.id]?.safetyScore === "number"
+                ? `${intelligenceById[zone.id]!.safetyScore}/100 (${intelligenceById[zone.id]!.safetyRisk})`
+                : zone.safety,
+          })),
+        );
+      } catch (error) {
+        if (!cancelled) {
+          setIntelligenceError("Zone-specific safety data is temporarily unavailable.");
+        }
+      } finally {
+        if (!cancelled) setIntelligenceLoading(false);
+      }
+    };
+
+    loadIntelligence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fishingZones.length, location.latitude, location.longitude]);
+
+  const zoneCount = fishingZones.length;
+
+  const nearestSuitableZone =
+    fishingZones.find((zone) => {
+      const score = zone.intelligence?.suitabilityScore;
+      const risk = zone.intelligence?.safetyRisk;
+      return (
+        typeof score === "number" &&
+        score >= 70 &&
+        (risk === "LOW" || risk === "MODERATE")
+      );
+    }) ??
+    fishingZones.find((zone) => {
+      const score = zone.intelligence?.suitabilityScore;
+      return typeof score === "number" && score >= 60;
+    });
+
+  const findNearestSuitable = () => {
+    if (!nearestSuitableZone) return;
+    const element = document.getElementById(`pfz-${nearestSuitableZone.id}`);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <div className="min-h-screen bg-[#06111f] text-white">
       <Sidebar />
@@ -219,20 +509,20 @@ export default function FisheriesPage() {
             <StatCard
   icon={Fish}
   title="Suitable Zones"
-  value={marineData.fisheries.length.toString()}
+  value={loading ? "…" : zoneCount.toString()}
   subtitle="Potential zones detected"
 />
 
             <StatCard
   icon={Thermometer}
   title="Sea Surface Temperature"
-  value={`${marineData.ocean.sst}°C`}
+  value="Unavailable"
   subtitle="Suitable temperature range"
 />
 <StatCard
   icon={Waves}
   title="Sea State"
-  value={marineData.ocean.seaState}
+  value="Live data"
   subtitle="Current marine condition"
 />
 
@@ -257,13 +547,92 @@ export default function FisheriesPage() {
             </div>
 
             <div className="rounded-full border border-emerald-400/20 bg-emerald-400/5 px-4 py-2 text-xs text-emerald-400">
-              {marineData.fisheries.length} zones found
+              {loading ? "Loading…" : `${zoneCount} zones found`}
             </div>
           </div>
 
+          {!loading && !error && fishingZones.length > 0 ? (
+            <>
+              <div className="mb-4 rounded-2xl border border-emerald-400/15 bg-emerald-400/[0.035] p-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-emerald-400">
+                    Nearest PFZ
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {fishingZones[0].name}
+                  </p>
+                </div>
+                <div className="flex gap-2 text-xs text-slate-300">
+                  <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    {fishingZones[0].distance}
+                  </span>
+                  <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    {fishingZones[0].direction}
+                  </span>
+                </div>
+              </div>
+              </div>
+
+              <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-blue-400/15 bg-blue-400/[0.035] p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-300">
+                    Nearest suitable fishing zone
+                  </p>
+                  {nearestSuitableZone ? (
+                    <p className="mt-1 text-sm text-slate-300">
+                      {nearestSuitableZone.name} · {nearestSuitableZone.distance} · {nearestSuitableZone.direction}
+                      {typeof nearestSuitableZone.intelligence?.suitabilityScore === "number"
+                        ? ` · ${nearestSuitableZone.intelligence.suitabilityScore}/100 suitability`
+                        : ""}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-400">
+                      No evaluated PFZ currently meets the prototype suitability and safety criteria.
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={findNearestSuitable}
+                  disabled={!nearestSuitableZone}
+                  className="shrink-0 rounded-xl border border-blue-400/20 bg-blue-400/10 px-5 py-2.5 text-sm font-medium text-blue-200 transition hover:bg-blue-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Find nearest suitable →
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {intelligenceLoading ? (
+            <div className="mb-4 rounded-2xl border border-blue-400/10 bg-blue-400/[0.03] p-4 text-xs text-blue-200">
+              Checking live weather and wave conditions for the five nearest PFZs…
+            </div>
+          ) : null}
+
+          {intelligenceError ? (
+            <div className="mb-4 rounded-2xl border border-yellow-400/10 bg-yellow-400/[0.03] p-4 text-xs text-yellow-300">
+              {intelligenceError}
+            </div>
+          ) : null}
+
           <div className="mt-5 space-y-4">
-            {fishingZones.map((zone) => (
+            {loading ? (
+              <div className="rounded-2xl border border-white/10 bg-[#091827]/80 p-6 text-sm text-slate-400">
+                Loading nearby Potential Fishing Zones…
+              </div>
+            ) : error ? (
+              <div className="rounded-2xl border border-yellow-400/10 bg-yellow-400/[0.03] p-6 text-sm text-yellow-300">
+                {error}
+              </div>
+            ) : fishingZones.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-[#091827]/80 p-6 text-sm text-slate-400">
+                No nearby Potential Fishing Zones were returned for the current location.
+              </div>
+            ) : fishingZones.map((zone) => (
               <div
+                id={`pfz-${zone.id}`}
                 key={zone.id}
                 className="rounded-2xl border border-white/10 bg-[#091827]/80 p-6 transition hover:border-emerald-400/20 hover:bg-[#0a1c2e]"
               >
@@ -275,9 +644,14 @@ export default function FisheriesPage() {
                       </div>
 
                       <div>
-                        <p className="text-xs font-medium text-emerald-400">
-                          {zone.id}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-300">
+                            #{zone.rank}
+                          </span>
+                          <p className="text-xs font-medium text-emerald-400">
+                            {zone.id}
+                          </p>
+                        </div>
 
                         <h4 className="mt-1 text-lg font-semibold">
                           {zone.name}
@@ -294,6 +668,18 @@ export default function FisheriesPage() {
                         <MapPin size={13} className="mr-1 inline" />
                         {zone.direction}
                       </span>
+
+                      {zone.year ? (
+                        <span className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-slate-400">
+                          Year: {zone.year}
+                        </span>
+                      ) : null}
+
+                      {zone.julianDay ? (
+                        <span className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-slate-400">
+                          Julian Day: {zone.julianDay}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
 
@@ -306,8 +692,13 @@ export default function FisheriesPage() {
                       }`}
                     >
                       <CircleCheck size={14} />
-                      {zone.suitability} Suitability
+                      {zone.intelligence?.suitability ?? zone.suitability} Suitability
                     </span>
+                    {typeof zone.intelligence?.suitabilityScore === "number" ? (
+                      <p className="mt-2 text-right text-[11px] text-slate-500">
+                        Prototype suitability: {zone.intelligence.suitabilityScore}/100
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -316,7 +707,11 @@ export default function FisheriesPage() {
                     <p className="text-xs text-slate-500">
                       Sea Surface Temperature
                     </p>
-                    <p className="mt-1 font-medium">{zone.sst}</p>
+                    <p className="mt-1 font-medium">
+                        {zone.intelligence?.conditions?.sst != null
+                          ? `${zone.intelligence.conditions.sst.toFixed(1)} °C`
+                          : zone.sst}
+                      </p>
                   </div>
 
                   <div>
@@ -334,23 +729,46 @@ export default function FisheriesPage() {
                     </p>
                     <p
                       className={
-                        zone.safety === "Good"
+                        zone.intelligence?.safetyRisk === "LOW"
                           ? "mt-1 font-medium text-emerald-400"
                           : "mt-1 font-medium text-yellow-400"
                       }
                     >
-                      {zone.safety}
+                      {zone.intelligence?.unavailable
+                        ? "Safety unavailable"
+                        : typeof zone.intelligence?.safetyScore === "number"
+                          ? `${zone.intelligence.safetyScore}/100 · ${zone.intelligence.safetyRisk ?? "Unknown"}`
+                          : zone.safety}
                     </p>
+                    {typeof zone.intelligence?.safetyConfidence === "number" ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Confidence {zone.intelligence.safetyConfidence}%
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex items-end justify-start lg:justify-end">
-                    <button className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-5 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-400/20">
+                    <Link
+                      href={`/map-explorer?lat=${encodeURIComponent(
+                        zone.latitude
+                      )}&lon=${encodeURIComponent(zone.longitude)}`}
+                      className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-5 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-400/20"
+                    >
                       View Zone →
-                    </button>
+                    </Link>
                   </div>
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Fishing suitability model
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              The prototype combines official PFZ evidence, proximity to the operating location and a live zone-specific marine safety check. It is an indicator of potentially favorable conditions, not a prediction of fish abundance. The five nearest zones receive the live safety evaluation; farther zones remain explicitly unevaluated.
+            </p>
           </div>
 
           <div className="mt-8 rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.035] p-6">
@@ -365,10 +783,11 @@ export default function FisheriesPage() {
                 </h3>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-                  ORCA evaluates sea surface temperature, chlorophyll
-                  concentration, distance from the operating location,
-                  ocean conditions and marine safety information to rank
-                  suitable fishing areas.
+                  ORCA uses nearby PFZ data from PostgreSQL/PostGIS,
+                  distance from the operating location and current marine
+                  intelligence to present potential fishing areas. Chlorophyll
+                  and PFZ-specific SST are currently unavailable in this
+                  prototype and are not fabricated.
                 </p>
               </div>
             </div>

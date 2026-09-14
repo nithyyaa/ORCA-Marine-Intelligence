@@ -1,0 +1,1 @@
+ALTER TABLE "marine_boundaries" ALTER COLUMN "geometry" SET DATA TYPE geometry(MultiPolygon,4326);

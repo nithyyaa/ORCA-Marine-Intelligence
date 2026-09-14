@@ -46,8 +46,12 @@ export async function GET() {
 
     const data = await response.json();
 
-    const times = data.hourly?.time ?? [];
-    const heights = data.hourly?.sea_level_height_msl ?? [];
+    const times: string[] = Array.isArray(data.hourly?.time)
+      ? data.hourly.time
+      : [];
+    const heights: unknown[] = Array.isArray(data.hourly?.sea_level_height_msl)
+      ? data.hourly.sea_level_height_msl
+      : [];
 
     const tides: {
       type: string;
@@ -63,7 +67,8 @@ export async function GET() {
       if (
         typeof previous !== "number" ||
         typeof current !== "number" ||
-        typeof next !== "number"
+        typeof next !== "number" ||
+        typeof times[i] !== "string"
       ) {
         continue;
       }
@@ -71,7 +76,7 @@ export async function GET() {
       if (current > previous && current > next) {
         tides.push({
           type: "High Tide",
-          time: formatTime(times[i]),
+          time: formatDateTime(times[i]),
           height: Number(current.toFixed(2)),
         });
       }
@@ -79,7 +84,7 @@ export async function GET() {
       if (current < previous && current < next) {
         tides.push({
           type: "Low Tide",
-          time: formatTime(times[i]),
+          time: formatDateTime(times[i]),
           height: Number(current.toFixed(2)),
         });
       }
@@ -106,10 +111,34 @@ export async function GET() {
   }
 }
 
-function formatTime(time: string) {
-  const date = new Date(time);
+/**
+ * Open-Meteo returns local forecast timestamps when timezone=auto.
+ * Format the timestamp directly so the date is preserved and tides
+ * from different forecast days are not displayed as duplicate times.
+ */
+function formatDateTime(time: string) {
+  const [datePart, timePart = "00:00"] = time.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = timePart.split(":").map(Number);
 
-  return date.toLocaleTimeString("en-IN", {
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return time;
+  }
+
+  const utcDate = new Date(
+    Date.UTC(year, month - 1, day, hour, minute)
+  );
+
+  return utcDate.toLocaleString("en-IN", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,

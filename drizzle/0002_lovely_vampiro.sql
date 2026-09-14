@@ -1,0 +1,1 @@
+ALTER TABLE "pfz_zones" ADD CONSTRAINT "pfz_zones_zone_id_unique" UNIQUE("zone_id");

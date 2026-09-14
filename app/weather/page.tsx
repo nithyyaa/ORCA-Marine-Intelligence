@@ -140,16 +140,26 @@ function Sidebar({ locationName }: { locationName: string }) {
 
 export default function WeatherPage() {
   const [weatherData, setWeatherData] = useState<any>(null);
+  const [tomorrowForecast, setTomorrowForecast] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadWeather() {
       try {
-        const response = await fetch("/api/weather", { cache: "no-store" });
+        const [response, forecastResponse] = await Promise.all([
+          fetch("/api/weather", { cache: "no-store" }),
+          fetch("/api/weather?date=tomorrow", { cache: "no-store" }),
+        ]);
+
         const data = await response.json();
+        const forecastData = await forecastResponse.json();
 
         if (response.ok) {
           setWeatherData(data);
+        }
+
+        if (forecastResponse.ok) {
+          setTomorrowForecast(forecastData);
         }
       } catch (error) {
         console.error("Weather page error:", error);
@@ -168,6 +178,69 @@ export default function WeatherPage() {
   const weatherCode = weatherData?.weatherCode;
   const precipitationProbability = weatherData?.precipitationProbability;
   const time = weatherData?.time;
+
+  const tomorrowDate = tomorrowForecast?.date;
+  const tomorrowTemperatureMax = tomorrowForecast?.temperatureMax;
+  const tomorrowTemperatureMin = tomorrowForecast?.temperatureMin;
+  const tomorrowWindSpeed = tomorrowForecast?.windSpeed;
+  const tomorrowPrecipitationProbability =
+    tomorrowForecast?.precipitationProbability;
+  const tomorrowWeatherCode = tomorrowForecast?.weatherCode;
+
+  const tomorrowCondition =
+    tomorrowWeatherCode === 0
+      ? "Clear sky"
+      : tomorrowWeatherCode === 1 || tomorrowWeatherCode === 2
+        ? "Partly cloudy"
+        : tomorrowWeatherCode === 3
+          ? "Overcast"
+          : tomorrowWeatherCode === 45 || tomorrowWeatherCode === 48
+            ? "Fog"
+            : tomorrowWeatherCode >= 51 && tomorrowWeatherCode <= 67
+              ? "Rain"
+              : tomorrowWeatherCode >= 80 && tomorrowWeatherCode <= 82
+                ? "Rain showers"
+                : tomorrowWeatherCode >= 95
+                  ? "Thunderstorm"
+                  : "Forecast unavailable";
+
+  const temperatureChange =
+    typeof temperature === "number" &&
+    typeof tomorrowTemperatureMax === "number"
+      ? tomorrowTemperatureMax - temperature
+      : null;
+
+  const windChange =
+    typeof windSpeed === "number" &&
+    typeof tomorrowWindSpeed === "number"
+      ? tomorrowWindSpeed - windSpeed
+      : null;
+
+  const rainProbabilityChange =
+    typeof precipitationProbability === "number" &&
+    typeof tomorrowPrecipitationProbability === "number"
+      ? tomorrowPrecipitationProbability -
+        precipitationProbability
+      : null;
+
+  const formatChange = (value: number | null, unit = "") => {
+    if (value === null) return "Unavailable";
+    const rounded = Math.round(value * 10) / 10;
+    return `${rounded > 0 ? "+" : ""}${rounded}${unit}`;
+  };
+
+  const forecastOutlook =
+    windChange !== null && windChange >= 10
+      ? "Wind conditions may become stronger tomorrow."
+      : windChange !== null && windChange <= -10
+        ? "Wind conditions may ease tomorrow."
+        : rainProbabilityChange !== null &&
+            rainProbabilityChange >= 20
+          ? "Rain probability is expected to increase tomorrow."
+          : rainProbabilityChange !== null &&
+              rainProbabilityChange <= -20
+            ? "Rain probability is expected to decrease tomorrow."
+            : "No major change is indicated by the available forecast.";
 
   const display = (value: unknown, suffix = "") =>
     value === null || value === undefined ? "Unavailable" : `${value}${suffix}`;
@@ -375,6 +448,197 @@ export default function WeatherPage() {
                   Monitor conditions
                 </p>
               </div>
+            </div>
+          </div>
+
+          {/* TOMORROW FORECAST */}
+
+          <div className="mt-8 rounded-2xl border border-white/10 bg-[#091827]/80 p-6">
+            <div className="flex items-center gap-3">
+              <CloudSun size={20} className="text-amber-400" />
+
+              <div>
+                <h3 className="font-semibold">
+                  Tomorrow Forecast
+                </h3>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Live forecast from Open-Meteo
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                <p className="text-xs text-slate-500">
+                  Forecast Date
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {tomorrowDate || "Unavailable"}
+                </p>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Tomorrow
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                <p className="text-xs text-slate-500">
+                  Temperature
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {display(tomorrowTemperatureMin)}°C -{" "}
+                  {display(tomorrowTemperatureMax)}°C
+                </p>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Minimum to maximum
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                <p className="text-xs text-slate-500">
+                  Maximum Wind
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {display(tomorrowWindSpeed)} km/h
+                </p>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Forecast maximum
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                <p className="text-xs text-slate-500">
+                  Rain Probability
+                </p>
+
+                <p className="mt-2 text-lg font-semibold">
+                  {display(tomorrowPrecipitationProbability, "%")}
+                </p>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  {tomorrowCondition}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* FORECAST COMPARISON */}
+
+          <div className="mt-8 rounded-2xl border border-white/10 bg-[#091827]/80 p-6">
+            <div className="flex items-center gap-3">
+              <CloudSun size={20} className="text-amber-400" />
+
+              <div>
+                <h3 className="font-semibold">
+                  Forecast Comparison
+                </h3>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Current conditions compared with tomorrow's forecast
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full min-w-[650px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-xs text-slate-500">
+                    <th className="px-4 py-3 font-medium">
+                      Parameter
+                    </th>
+                    <th className="px-4 py-3 font-medium">
+                      Current
+                    </th>
+                    <th className="px-4 py-3 font-medium">
+                      Tomorrow
+                    </th>
+                    <th className="px-4 py-3 font-medium">
+                      Change
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  <tr className="border-b border-white/5">
+                    <td className="px-4 py-4 text-slate-300">
+                      Temperature
+                    </td>
+                    <td className="px-4 py-4">
+                      {display(temperature, "°C")}
+                    </td>
+                    <td className="px-4 py-4">
+                      {tomorrowTemperatureMax !== null &&
+                      tomorrowTemperatureMax !== undefined
+                        ? `${tomorrowTemperatureMax}°C max`
+                        : "Unavailable"}
+                    </td>
+                    <td className="px-4 py-4 text-amber-300">
+                      {formatChange(temperatureChange, "°C")}
+                    </td>
+                  </tr>
+
+                  <tr className="border-b border-white/5">
+                    <td className="px-4 py-4 text-slate-300">
+                      Wind Speed
+                    </td>
+                    <td className="px-4 py-4">
+                      {display(windSpeed, " km/h")}
+                    </td>
+                    <td className="px-4 py-4">
+                      {display(tomorrowWindSpeed, " km/h")}
+                    </td>
+                    <td className="px-4 py-4 text-amber-300">
+                      {formatChange(windChange, " km/h")}
+                    </td>
+                  </tr>
+
+                  <tr className="border-b border-white/5">
+                    <td className="px-4 py-4 text-slate-300">
+                      Rain Probability
+                    </td>
+                    <td className="px-4 py-4">
+                      {display(precipitationProbability, "%")}
+                    </td>
+                    <td className="px-4 py-4">
+                      {display(tomorrowPrecipitationProbability, "%")}
+                    </td>
+                    <td className="px-4 py-4 text-amber-300">
+                      {formatChange(rainProbabilityChange, "%")}
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td className="px-4 py-4 text-slate-300">
+                      Weather Condition
+                    </td>
+                    <td className="px-4 py-4">
+                      {condition}
+                    </td>
+                    <td className="px-4 py-4">
+                      {tomorrowCondition}
+                    </td>
+                    <td className="px-4 py-4 text-slate-400">
+                      Forecast
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-amber-400/10 bg-amber-400/5 p-4">
+              <p className="text-xs text-slate-500">
+                Forecast outlook
+              </p>
+
+              <p className="mt-1 text-sm leading-6 text-amber-300">
+                {forecastOutlook}
+              </p>
             </div>
           </div>
 

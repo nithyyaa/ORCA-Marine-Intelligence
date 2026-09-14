@@ -81,6 +81,9 @@ button {
 
 .nav {
   padding: 12px 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .nav-item {
@@ -346,7 +349,7 @@ button {
 .map-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  height: 420px;
+  height: 520px;
   margin-bottom: 12px;
 }
 
@@ -833,5 +836,347 @@ button {
 
   .right-column {
     grid-template-columns: 1fr;
+  }
+}
+/* =========================================================
+   ORCA — GEOFENCE STATUS
+   ========================================================= */
+
+.geofence-card {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 20px 22px 16px;
+  border-radius: 14px;
+  border: 1px solid #1c3b55;
+  background: #071a2a;
+  color: #f5f9ff;
+}
+
+/* -------------------------
+   HEADER
+   ------------------------- */
+
+.geofence-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.geofence-title-group {
+  min-width: 0;
+}
+
+.geofence-label {
+  margin-bottom: 6px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.geofence-location-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8faec5;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.geofence-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+}
+
+.dot-inside {
+  background: #2ee88b;
+  box-shadow: 0 0 8px rgba(46, 232, 139, 0.45);
+}
+
+.dot-outside {
+  background: #ff5364;
+  box-shadow: 0 0 8px rgba(255, 83, 100, 0.45);
+}
+
+/* Status badge */
+
+.geofence-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+
+  padding: 6px 11px;
+  border-radius: 7px;
+
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.badge-inside {
+  color: #ffc107;
+  background: rgba(255, 193, 7, 0.09);
+  border: 1px solid rgba(255, 193, 7, 0.5);
+}
+
+.badge-outside {
+  color: #ff5364;
+  background: rgba(255, 83, 100, 0.08);
+  border: 1px solid rgba(255, 83, 100, 0.45);
+}
+
+
+/* -------------------------
+   CURRENT MARITIME ZONE
+   ------------------------- */
+
+.geofence-zone {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+
+  padding: 15px 16px;
+  margin-bottom: 14px;
+
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.geofence-zone-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 9px;
+  background: rgba(30, 144, 255, 0.10);
+
+  font-size: 18px;
+}
+
+.geofence-zone-label {
+  margin-bottom: 3px;
+
+  color: #7191aa;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
+
+.geofence-zone-name {
+  color: #f5f9ff;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+
+/* -------------------------
+   METRICS
+   ------------------------- */
+
+.geofence-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.geofence-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  padding: 11px 13px;
+
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.geofence-metric-label {
+  color: #7191aa;
+  font-size: 11px;
+}
+
+.geofence-metric-value {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.geofence-warning {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.geofence-warning.safe {
+  color: #2ee88b;
+}
+
+.geofence-warning.moderate {
+  color: #ffc107;
+}
+
+.geofence-warning.high {
+  color: #ff9f43;
+}
+
+.geofence-warning.critical {
+  color: #ff5364;
+}
+
+
+/* -------------------------
+   OUTSIDE EEZ MESSAGE
+   ------------------------- */
+
+.geofence-outside-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+
+  padding: 12px 14px;
+  margin-bottom: 14px;
+
+  border-radius: 9px;
+  border: 1px solid rgba(255, 83, 100, 0.25);
+  background: rgba(255, 83, 100, 0.05);
+}
+
+.geofence-outside-message > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+
+  border-radius: 50%;
+
+  color: #ff5364;
+  border: 1px solid rgba(255, 83, 100, 0.5);
+
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.geofence-outside-message strong {
+  display: block;
+  margin-bottom: 3px;
+
+  color: #ff6b78;
+  font-size: 12px;
+}
+
+.geofence-outside-message p {
+  margin: 0;
+
+  color: #8faec5;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+
+/* -------------------------
+   FOOTER / DATA SOURCE
+   ------------------------- */
+
+.geofence-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+
+  padding-top: 13px;
+
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.geofence-source,
+.geofence-dataset,
+.geofence-date {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.geofence-source > span,
+.geofence-dataset > span,
+.geofence-date > span {
+  color: #64839d;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
+
+.geofence-source strong,
+.geofence-dataset strong,
+.geofence-date strong {
+  color: #c8d7e4;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+
+/* -------------------------
+   LOADING / ERROR
+   ------------------------- */
+
+.geofence-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.geofence-loading-dot {
+  width: 8px;
+  height: 8px;
+
+  border-radius: 50%;
+  background: #3b9cff;
+  box-shadow: 0 0 10px rgba(59, 156, 255, 0.5);
+}
+
+.geofence-loading-text {
+  color: #8faec5;
+  font-size: 12px;
+}
+
+.geofence-error strong {
+  color: #ff5364;
+  font-size: 13px;
+}
+
+
+/* -------------------------
+   RESPONSIVE
+   ------------------------- */
+
+@media (max-width: 700px) {
+  .geofence-header {
+    flex-direction: column;
+  }
+
+  .geofence-status-badge {
+    align-self: flex-start;
+  }
+
+  .geofence-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .geofence-footer {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 }

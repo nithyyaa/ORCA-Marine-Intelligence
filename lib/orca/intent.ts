@@ -19,8 +19,14 @@ export type MarineQuery = {
   language: string;
 };
 
+export type ConversationMessage = {
+  role: "user" | "orca";
+  text: string;
+};
+
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 const allowedIntents: MarineIntent[] = [
@@ -34,32 +40,81 @@ const allowedIntents: MarineIntent[] = [
   "GENERAL",
 ];
 
-function fallbackAnalysis(query: string): MarineQuery {
+function fallbackAnalysis(
+  query: string,
+  selectedLanguage = "en"
+): MarineQuery {
   return {
     originalQuery: query,
     intent: "GENERAL",
     location: "Current operating location",
     date: "Current",
     time: null,
-    language: "en",
+    language: selectedLanguage,
   };
 }
 
 export async function analyseMarineQuery(
   query: string,
-  selectedLanguage = "en"
+  selectedLanguage = "en",
+  conversationHistory: ConversationMessage[] = []
 ): Promise<MarineQuery> {
   if (!query.trim()) {
-    return fallbackAnalysis(query);
+    return fallbackAnalysis(query, selectedLanguage);
   }
 
   try {
-    const response = await client.responses.create({
-      model: "gpt-5.6-luna",
+    const recentHistory = conversationHistory
+      .slice(-10)
+      .filter(
+        (message) =>
+          message &&
+          (message.role === "user" || message.role === "orca") &&
+          typeof message.text === "string" &&
+          message.text.trim()
+      )
+      .map(
+        (message) =>
+          `${message.role === "user" ? "User" : "ORCA"}: ${message.text
+            .trim()
+            .slice(0, 1200)}`
+      )
+      .join("\n");
 
-      input: [
+    const conversationContext = recentHistory
+      ? `
+Previous conversation:
+
+${recentHistory}
+
+Use this previous conversation ONLY when it is relevant to understanding
+the current user query.
+
+The current query may be a follow-up such as:
+- "What about tomorrow?"
+- "And the waves?"
+- "Is it safe?"
+- "What about there?"
+- "How about evening?"
+
+Resolve references such as location, date, time, activity, or topic from the
+previous conversation when the current query depends on them.
+
+The current user query has priority if it explicitly provides new information.
+Do not blindly copy information from previous turns when the current query
+changes it.
+`
+      : `
+There is no previous conversation context.
+Treat the current query as a standalone query.
+`;
+
+    const response = await client.chat.completions.create({
+      model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+
+      messages: [
         {
-          role: "developer",
+          role: "system",
           content: `
 You are ORCA's marine query understanding engine.
 
@@ -75,6 +130,10 @@ The user may write in:
 Do NOT depend on hardcoded keywords.
 
 Understand the meaning of the query semantically, regardless of language.
+
+You are also given previous conversation context when available.
+
+Use that context to resolve follow-up questions and references.
 
 Determine:
 
@@ -137,6 +196,49 @@ ROUTE
 GENERAL
 - Anything that does not clearly belong to the above categories
 
+FOLLOW-UP CONTEXT RULES:
+
+If the current query is incomplete but clearly refers to the previous
+conversation, use the previous conversation to resolve the missing context.
+
+Examples:
+
+Previous:
+User: "What is the weather in Vizag?"
+Current:
+"What about tomorrow?"
+
+Return:
+intent = WEATHER
+location = Vizag
+date = Tomorrow
+
+Previous:
+User: "Is fishing safe in Vizag?"
+Current:
+"What about evening?"
+
+Return:
+intent = FISHING_SAFETY
+location = Vizag
+time = evening
+
+Previous:
+User: "What are the waves near Chennai?"
+Current:
+"And tomorrow?"
+
+Return:
+intent = OCEAN_CONDITIONS
+location = Chennai
+date = Tomorrow
+
+If the current query contains a new location, date, time, or topic,
+prefer the new information.
+
+Do not invent context that is not supported by the current query or
+previous conversation.
+
 DATE RULES:
 
 If the user means today/current conditions:
@@ -147,7 +249,10 @@ If the user means tomorrow:
 
 If the user specifies another date, return that date in a clear form.
 
-If no date is mentioned:
+If no date is mentioned in the current query but the previous conversation
+clearly establishes the date being discussed, preserve that context.
+
+If no date is available:
 "Current"
 
 TIME RULES:
@@ -160,6 +265,9 @@ Examples:
 "morning" -> "morning"
 "evening" -> "evening"
 
+If the current query does not specify a time but the previous conversation
+clearly establishes the time being discussed, preserve that context.
+
 If no time is specified:
 null
 
@@ -167,12 +275,15 @@ LOCATION RULES:
 
 Extract the location mentioned by the user.
 
-If no location is mentioned:
+If the current query does not mention a location but clearly refers to a
+location from the previous conversation, preserve that location.
+
+If no location is mentioned anywhere:
 "Current operating location"
 
 LANGUAGE RULES:
 
-Return the language of the user's query.
+Return the language of the user's current query.
 
 Use:
 "en" for English
@@ -184,7 +295,17 @@ Use:
 The selected response language is provided separately.
 Do not confuse the selected response language with the language of the user's query.
 
-Return ONLY valid JSON matching the requested schema.
+Return ONLY valid JSON.
+
+The JSON MUST have exactly these fields:
+
+{
+  "intent": "FISHING_SAFETY | FISHING_PFZ | WEATHER | OCEAN_CONDITIONS | TIDE | HAZARD | ROUTE | GENERAL",
+  "location": "string",
+  "date": "string",
+  "time": "string or null",
+  "language": "en | te | hi | ta | kn"
+}
 `,
         },
         {
@@ -192,51 +313,29 @@ Return ONLY valid JSON matching the requested schema.
           content: `
 Selected response language: ${selectedLanguage}
 
-User query:
+${conversationContext}
+
+Current user query:
 ${query}
 `,
         },
       ],
 
-      text: {
-        format: {
-          type: "json_schema",
-          name: "marine_query_analysis",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              intent: {
-                type: "string",
-                enum: allowedIntents,
-              },
-              location: {
-                type: ["string", "null"],
-              },
-              date: {
-                type: "string",
-              },
-              time: {
-                type: ["string", "null"],
-              },
-              language: {
-                type: "string",
-              },
-            },
-            required: [
-              "intent",
-              "location",
-              "date",
-              "time",
-              "language",
-            ],
-            additionalProperties: false,
-          },
-        },
+      response_format: {
+        type: "json_object",
       },
+
+      temperature: 0.1,
+      max_tokens: 300,
     });
 
-    const parsed = JSON.parse(response.output_text);
+    const output = response.choices[0]?.message?.content;
+
+    if (!output) {
+      throw new Error("Groq returned an empty response.");
+    }
+
+    const parsed = JSON.parse(output);
 
     const intent: MarineIntent = allowedIntents.includes(
       parsed.intent as MarineIntent
@@ -244,29 +343,37 @@ ${query}
       ? parsed.intent
       : "GENERAL";
 
+    const validLanguages = ["en", "te", "hi", "ta", "kn"];
+
     return {
       originalQuery: query,
+
       intent,
+
       location:
         typeof parsed.location === "string" && parsed.location.trim()
           ? parsed.location
           : "Current operating location",
+
       date:
         typeof parsed.date === "string" && parsed.date.trim()
           ? parsed.date
           : "Current",
+
       time:
         typeof parsed.time === "string" && parsed.time.trim()
           ? parsed.time
           : null,
+
       language:
-        typeof parsed.language === "string" && parsed.language.trim()
+        typeof parsed.language === "string" &&
+        validLanguages.includes(parsed.language)
           ? parsed.language
           : selectedLanguage,
     };
   } catch (error) {
-    console.error("ORCA AI query analysis failed:", error);
+    console.error("ORCA Llama/Groq query analysis failed:", error);
 
-    return fallbackAnalysis(query);
+    return fallbackAnalysis(query, selectedLanguage);
   }
 }

@@ -172,10 +172,24 @@ export default function OceanConditionsPage() {
   const [oceanData, setOceanData] = useState<any>(null);
   const [weatherData, setWeatherData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [forecastRows, setForecastRows] = useState<any[]>([]);
+  const [forecastLoading, setForecastLoading] = useState(true);
+  const [tideData, setTideData] = useState<any>(null);
+  const [tideLoading, setTideLoading] = useState(true);
+  const [locationVersion, setLocationVersion] = useState(0);
 
   useEffect(() => {
+    const handleLocationChange = () => setLocationVersion((v) => v + 1);
+    window.addEventListener("orca-location-changed", handleLocationChange);
+    return () => window.removeEventListener("orca-location-changed", handleLocationChange);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function fetchData() {
       try {
+        setLoading(true);
         const [oceanResponse, weatherResponse] = await Promise.all([
           fetch("/api/ocean", { cache: "no-store" }),
           fetch("/api/weather", { cache: "no-store" }),
@@ -184,22 +198,89 @@ export default function OceanConditionsPage() {
         const ocean = await oceanResponse.json();
         const weather = await weatherResponse.json();
 
-        if (oceanResponse.ok) {
-          setOceanData(ocean);
-        }
-
-        if (weatherResponse.ok) {
-          setWeatherData(weather);
-        }
+        if (cancelled) return;
+        if (oceanResponse.ok) setOceanData(ocean);
+        if (weatherResponse.ok) setWeatherData(weather);
       } catch (error) {
         console.error("Failed to fetch marine data:", error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     fetchData();
-  }, []);
+    return () => { cancelled = true; };
+  }, [locationVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchTide() {
+      try {
+        setTideLoading(true);
+        const response = await fetch("/api/tide", { cache: "no-store" });
+        const data = await response.json();
+
+        if (!cancelled) {
+          setTideData(response.ok ? data : null);
+        }
+      } catch (error) {
+        console.error("Ocean tide error:", error);
+        if (!cancelled) setTideData(null);
+      } finally {
+        if (!cancelled) setTideLoading(false);
+      }
+    }
+
+    fetchTide();
+    return () => { cancelled = true; };
+  }, [locationVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchForecast() {
+      try {
+        setForecastLoading(true);
+        const stored = localStorage.getItem("orca-location");
+        let latitude: number | null = null;
+        let longitude: number | null = null;
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (Number.isFinite(parsed.latitude) && Number.isFinite(parsed.longitude)) {
+              latitude = parsed.latitude;
+              longitude = parsed.longitude;
+            }
+          } catch {
+            // Ignore invalid stored location and let the API report unavailable data.
+          }
+        }
+
+        if (latitude === null || longitude === null) {
+          setForecastRows([]);
+          return;
+        }
+
+        const response = await fetch(
+          `/api/map-forecast?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}&hours=24`,
+          { cache: "no-store" },
+        );
+        const data = await response.json();
+        if (!cancelled) {
+          setForecastRows(Array.isArray(data?.hourly) ? data.hourly.slice(0, 8) : []);
+        }
+      } catch (error) {
+        console.error("Ocean forecast comparison error:", error);
+        if (!cancelled) setForecastRows([]);
+      } finally {
+        if (!cancelled) setForecastLoading(false);
+      }
+    }
+
+    fetchForecast();
+    return () => { cancelled = true; };
+  }, [locationVersion]);
 
   const locationName = oceanData?.location || weatherData?.location || "Operating location";
   const sst = oceanData?.sst;
@@ -417,6 +498,98 @@ export default function OceanConditionsPage() {
                 </p>
               </div>
             </div>
+          </div>
+
+          <div className="mt-8 rounded-2xl border border-cyan-400/10 bg-cyan-400/[0.03] p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">24-Hour Weather & Ocean Forecast</h3>
+                <p className="mt-1 text-sm text-slate-500">Hourly comparison of wind, rain probability and wave conditions for the selected operating location.</p>
+              </div>
+              <span className="rounded-full bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-300">
+                {forecastLoading ? "Loading forecast" : forecastRows.length ? "Live forecast" : "Forecast unavailable"}
+              </span>
+            </div>
+
+            {forecastRows.length > 0 ? (
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[700px] text-left text-xs">
+                  <thead className="border-b border-white/10 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3 font-medium">Time</th>
+                      <th className="px-3 py-3 font-medium">Wind</th>
+                      <th className="px-3 py-3 font-medium">Rain</th>
+                      <th className="px-3 py-3 font-medium">Wave</th>
+                      <th className="px-3 py-3 font-medium">Sea State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecastRows.map((row, index) => (
+                      <tr key={`${row.time ?? "forecast"}-${index}`} className="border-b border-white/5">
+                        <td className="px-3 py-3 text-slate-300">
+                          {row.time ? new Date(row.time).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Unavailable"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {row.windSpeed == null ? "Unavailable" : `${row.windSpeed} km/h`}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {row.precipitationProbability == null ? "Unavailable" : `${row.precipitationProbability}%`}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {row.waveHeight == null ? "Unavailable" : `${row.waveHeight} m`}
+                        </td>
+                        <td className="px-3 py-3 text-cyan-300">
+                          {typeof row.waveHeight === "number"
+                            ? row.waveHeight < 1 ? "Calm" : row.waveHeight < 1.5 ? "Slight" : row.waveHeight < 2.5 ? "Moderate" : "Rough"
+                            : "Unavailable"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="mt-5 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-500">
+                No hourly forecast is currently available for this operating location. ORCA will not substitute estimated values.
+              </p>
+            )}
+
+            <p className="mt-4 text-[11px] text-slate-600">Source: Open-Meteo weather + marine forecast · Forecast values are predictions, not current observations.</p>
+          </div>
+
+          <div className="mt-8 rounded-2xl border border-cyan-400/10 bg-cyan-400/[0.03] p-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Navigation size={20} className="text-cyan-400" />
+                <div>
+                  <h3 className="text-lg font-semibold">Tide Information</h3>
+                  <p className="mt-1 text-sm text-slate-500">Upcoming high and low tides for the selected operating location.</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-300">
+                {tideLoading ? "Loading tides" : tideData?.tides?.length ? "Live tide forecast" : "Tide unavailable"}
+              </span>
+            </div>
+
+            {Array.isArray(tideData?.tides) && tideData.tides.length > 0 ? (
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {tideData.tides.slice(0, 6).map((tide: any, index: number) => (
+                  <div key={`${tide.type ?? "tide"}-${tide.time ?? "unavailable"}-${index}`} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                    <p className="text-xs text-slate-500">{tide.type ?? "Tide"}</p>
+                    <p className="mt-2 text-lg font-semibold text-cyan-300">{tide.time ?? "Unavailable"}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Height: {tide.height == null ? "Unavailable" : `${tide.height} m`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-5 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-500">
+                No tide prediction is currently available for this operating location. ORCA will not substitute estimated tide values.
+              </p>
+            )}
+
+            <p className="mt-4 text-[11px] text-slate-600">Source: Open-Meteo Marine API · Tide values are model-derived forecast predictions.</p>
           </div>
 
           <div className="mt-8 rounded-2xl border border-white/10 bg-[#091827]/80 p-6">

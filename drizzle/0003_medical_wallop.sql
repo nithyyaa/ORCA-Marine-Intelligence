@@ -1,0 +1,1 @@
+ALTER TABLE "pfz_zones" ADD COLUMN "location" geometry(Point,4326);

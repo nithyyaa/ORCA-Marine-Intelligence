@@ -1,4 +1,8 @@
-export type RiskLevel = "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
+export type RiskLevel =
+  | "LOW"
+  | "MODERATE"
+  | "HIGH"
+  | "CRITICAL";
 
 export type RiskFactor = {
   name: string;
@@ -50,41 +54,60 @@ function factorLevel(score: number): RiskLevel {
 
 function windRisk(value?: number | null) {
   if (!Number.isFinite(value)) return null;
+
   const wind = Number(value);
+
   if (wind >= 45) return 100;
   if (wind >= 35) return 85;
   if (wind >= 25) return 60;
   if (wind >= 15) return 30;
+
   return 10;
 }
 
 function waveRisk(value?: number | null) {
   if (!Number.isFinite(value)) return null;
+
   const wave = Number(value);
+
   if (wave >= 4) return 100;
   if (wave >= 3) return 85;
   if (wave >= 2) return 60;
   if (wave >= 1.5) return 35;
+
   return 10;
 }
 
 function rainRisk(value?: number | null) {
   if (!Number.isFinite(value)) return null;
+
   const rain = Number(value);
+
   if (rain >= 80) return 100;
   if (rain >= 60) return 70;
   if (rain >= 30) return 40;
+
   return 10;
 }
 
 function seaStateRisk(state?: string | null) {
   if (!state) return null;
+
   const value = state.toLowerCase();
-  if (value.includes("phenomenal") || value.includes("very rough") || value.includes("high")) return 90;
+
+  if (
+    value.includes("phenomenal") ||
+    value.includes("very rough") ||
+    value.includes("high")
+  ) {
+    return 90;
+  }
+
   if (value.includes("rough")) return 70;
   if (value.includes("moderate")) return 40;
   if (value.includes("slight")) return 20;
   if (value.includes("calm")) return 5;
+
   return null;
 }
 
@@ -95,7 +118,9 @@ function addFactor(
   reason: string,
 ) {
   if (score === null || !Number.isFinite(score)) return;
+
   const weight = WEIGHTS[name as keyof typeof WEIGHTS];
+
   factors.push({
     name,
     score,
@@ -111,63 +136,222 @@ export function calculateMarineSafety(input: {
   waveHeight?: number | null;
   rainfall?: number | null;
   seaState?: string | null;
+
   lightningRisk?: number | null;
   cycloneRisk?: number | null;
+
   tideRisk?: number | null;
+
   insideEEZ?: boolean | null;
   geofenceRisk?: number | null;
+
+  /*
+   * Optional data-quality inputs.
+   *
+   * Existing callers do not need to provide these.
+   * When supplied, they allow confidence to account
+   * for freshness/reliability instead of only
+   * counting whether a factor exists.
+   */
+  dataReliability?: Partial<
+    Record<
+      | "Wind"
+      | "Wave"
+      | "Rainfall"
+      | "Sea State"
+      | "Lightning"
+      | "Cyclone"
+      | "Tide",
+      number
+    >
+  >;
 }): SafetyResult {
   const factors: RiskFactor[] = [];
 
-  addFactor(factors, "Wind", windRisk(input.windSpeed), `Wind speed: ${input.windSpeed ?? "unavailable"} km/h`);
-  addFactor(factors, "Wave", waveRisk(input.waveHeight), `Wave height: ${input.waveHeight ?? "unavailable"} m`);
-  addFactor(factors, "Rainfall", rainRisk(input.rainfall), `Rain probability: ${input.rainfall ?? "unavailable"}%`);
-  addFactor(factors, "Sea State", seaStateRisk(input.seaState), `Sea state: ${input.seaState ?? "unavailable"}`);
-  addFactor(factors, "Lightning", input.lightningRisk ?? null, "Lightning hazard assessment");
-  addFactor(factors, "Cyclone", input.cycloneRisk ?? null, "Cyclone hazard assessment");
-  addFactor(factors, "Tide", input.tideRisk ?? null, "Tidal condition assessment");
+  addFactor(
+    factors,
+    "Wind",
+    windRisk(input.windSpeed),
+    `Wind speed: ${input.windSpeed ?? "unavailable"} km/h`,
+  );
 
-  // Normalize by the weights of factors that are actually available.
-  // This prevents missing data from silently becoming zero-risk data.
-  const totalWeight = factors.reduce((sum, factor) => sum + factor.weight, 0);
+  addFactor(
+    factors,
+    "Wave",
+    waveRisk(input.waveHeight),
+    `Wave height: ${input.waveHeight ?? "unavailable"} m`,
+  );
+
+  addFactor(
+    factors,
+    "Rainfall",
+    rainRisk(input.rainfall),
+    `Rain probability: ${input.rainfall ?? "unavailable"}%`,
+  );
+
+  addFactor(
+    factors,
+    "Sea State",
+    seaStateRisk(input.seaState),
+    `Sea state: ${input.seaState ?? "unavailable"}`,
+  );
+
+  addFactor(
+    factors,
+    "Lightning",
+    input.lightningRisk ?? null,
+    "Lightning hazard assessment",
+  );
+
+  addFactor(
+    factors,
+    "Cyclone",
+    input.cycloneRisk ?? null,
+    "Cyclone hazard assessment",
+  );
+
+  addFactor(
+    factors,
+    "Tide",
+    input.tideRisk ?? null,
+    "Tidal condition assessment",
+  );
+
+  /*
+   * Normalize by the weights of factors that are actually available.
+   *
+   * Missing data is NOT treated as zero-risk data.
+   */
+  const totalWeight = factors.reduce(
+    (sum, factor) => sum + factor.weight,
+    0,
+  );
 
   for (const factor of factors) {
-    factor.contribution = totalWeight > 0
-      ? Math.round((factor.score * factor.weight / totalWeight) * 100) / 100
-      : 0;
+    factor.contribution =
+      totalWeight > 0
+        ? Math.round(
+            (factor.score * factor.weight / totalWeight) * 100,
+          ) / 100
+        : 0;
   }
 
-  let weightedRisk =
+  const weightedRisk =
     totalWeight > 0
-      ? factors.reduce((sum, factor) => sum + factor.score * factor.weight, 0) / totalWeight
+      ? factors.reduce(
+          (sum, factor) =>
+            sum + factor.score * factor.weight,
+          0,
+        ) / totalWeight
       : null;
 
-  let safetyScore = weightedRisk === null ? 0 : Math.round(clamp(100 - weightedRisk));
+  let safetyScore =
+    weightedRisk === null
+      ? 0
+      : Math.round(clamp(100 - weightedRisk));
 
-  // Geofence is an operational constraint rather than a weather factor.
+  /*
+   * Geofence is treated separately from environmental
+   * conditions because being outside an EEZ is an
+   * operational/jurisdictional warning, not automatically
+   * an environmental hazard.
+   */
   if (Number.isFinite(input.geofenceRisk)) {
-    safetyScore = Math.round(clamp(safetyScore - Number(input.geofenceRisk)));
+    safetyScore = Math.round(
+      clamp(
+        safetyScore - Number(input.geofenceRisk),
+      ),
+    );
   }
 
   const risk = riskLevel(safetyScore);
 
-  const expectedFactorCount = Object.keys(WEIGHTS).length;
-  const availableFactorCount = factors.length;
-  const confidence = Math.round((availableFactorCount / expectedFactorCount) * 100);
+  const expectedFactorCount =
+    Object.keys(WEIGHTS).length;
 
-  let recommendation = "Current marine conditions appear favourable based on the available data.";
+  const availableFactorCount =
+    factors.length;
+
+  /*
+   * Base confidence:
+   * how many expected marine factors are available.
+   */
+  const availabilityConfidence =
+    (availableFactorCount /
+      expectedFactorCount) *
+    100;
+
+  /*
+   * Optional reliability/freshness confidence.
+   *
+   * Values are expected between 0 and 100.
+   *
+   * If no reliability information is supplied,
+   * preserve the existing availability-based behaviour.
+   */
+  let confidence = Math.round(
+    availabilityConfidence,
+  );
+
+  const reliabilityValues = factors
+    .map(
+      (factor) =>
+        input.dataReliability?.[
+          factor.name as keyof typeof input.dataReliability
+        ],
+    )
+    .filter(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isFinite(value),
+    );
+
+  if (reliabilityValues.length > 0) {
+    const reliabilityConfidence =
+      reliabilityValues.reduce(
+        (sum, value) =>
+          sum + clamp(value),
+        0,
+      ) / reliabilityValues.length;
+
+    /*
+     * Combine availability and reliability.
+     *
+     * Availability remains important because a missing
+     * factor cannot be replaced by a freshness score.
+     */
+    confidence = Math.round(
+      availabilityConfidence *
+        0.6 +
+        reliabilityConfidence *
+        0.4,
+    );
+  }
+
+  confidence = Math.round(
+    clamp(confidence),
+  );
+
+  let recommendation =
+    "Current marine conditions appear favourable based on the available data.";
+
   if (risk === "MODERATE") {
-    recommendation = "Exercise caution and monitor marine conditions before departure.";
+    recommendation =
+      "Exercise caution and monitor marine conditions before departure.";
   } else if (risk === "HIGH") {
-    recommendation = "Fishing is not recommended under the current marine conditions.";
+    recommendation =
+      "Fishing is not recommended under the current marine conditions.";
   } else if (risk === "CRITICAL") {
-    recommendation = "Avoid departure. Current conditions indicate critical marine risk.";
+    recommendation =
+      "Avoid departure. Current conditions indicate critical marine risk.";
   }
 
   if (availableFactorCount === 0) {
-    recommendation = "Marine risk cannot be assessed because required live conditions are unavailable.";
+    recommendation =
+      "Marine risk cannot be assessed because required live conditions are unavailable.";
   } else if (confidence < 60) {
-    recommendation += " Risk confidence is reduced because some marine factors are unavailable.";
+    recommendation +=
+      " Risk confidence is reduced because some marine factors are unavailable or have limited reliability.";
   }
 
   return {

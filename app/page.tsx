@@ -16,7 +16,6 @@ import {
   FileText,
   Route,
   Info,
-  Send,
   ChevronDown,
   BookOpen,
 } from "lucide-react";
@@ -29,10 +28,11 @@ const MarineMap = dynamic(
 );
 
 const navItems = [
+
   { icon: Home, label: "Dashboard", href: "/" },
   { icon: MessageIcon, label: "Ask ORCA", href: "/ask-orca" },
   { icon: Map, label: "Map Explorer", href: "/map-explorer" },
-  { icon: Bell, label: "Alerts", href: "/alerts", badge: 3 },
+  { icon: Bell, label: "Alerts", href: "/alerts" },
   { icon: Fish, label: "Fisheries", href: "/fisheries" },
   { icon: Waves, label: "Ocean Conditions", href: "/ocean-conditions" },
   { icon: Cloud, label: "Weather", href: "/weather" },
@@ -43,7 +43,12 @@ const navItems = [
   { icon: FileText, label: "Reports", href: "/reports" },
   { icon: BookOpen, label: "Knowledge Base", href: "/knowledge" },
   { icon: Settings, label: "Settings", href: "/settings" },
-];
+] as Array<{
+  icon: typeof Home;
+  label: string;
+  href: string;
+  badge?: number;
+}>;
 
 function MessageIcon(props: any) {
   return <span {...props}>▣</span>;
@@ -193,19 +198,6 @@ function Header() {
 
   return (
     <header className="topbar">
-      <div className="ask-area">
-        <div className="ask-title">Ask ORCA</div>
-
-        <div className="ask-box">
-          Is it safe to go fishing tomorrow morning at 6 AM from this
-          location?
-
-          <button className="send-button">
-            <Send size={18} />
-          </button>
-        </div>
-      </div>
-
       <div className="location">
         <strong>📍 {locationName}</strong>
 
@@ -431,24 +423,6 @@ function Stats({ data }: { data: DashboardData | null }) {
               {data ? `${risk} Risk` : "Loading"}
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="card stat-card">
-        <div className="stat-title">
-          Suitable Window
-        </div>
-
-        <div className="stat-value">
-          Unavailable
-        </div>
-
-        <div className="stat-small">
-          Forecast-based window
-        </div>
-
-        <div className="stat-small green">
-          Scenario engine not connected yet
         </div>
       </div>
 

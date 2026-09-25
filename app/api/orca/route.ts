@@ -278,6 +278,30 @@ function buildClarificationResponse({
   return null;
 }
 
+function extractRouteDestination(query: string): string | null {
+  const normalized = query.replace(/\s+/g, " ").trim();
+
+  const coordinateMatch = normalized.match(
+    /(?:\bto\b|destination(?:\s+is)?|towards)\s*(?:coordinates?\s*)?(\(?\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*\)?)/i,
+  );
+
+  if (coordinateMatch?.[1]) {
+    return coordinateMatch[1].trim();
+  }
+
+  const destinationMatch = normalized.match(
+    /(?:\bto\b|destination(?:\s+is)?|towards)\s+(.+?)(?=\s+(?:from|tomorrow|today|tonight|at\s+\d|on\s+|for\s+)\b|[?.!;,]|$)/i,
+  );
+
+  if (!destinationMatch?.[1]) return null;
+
+  const destination = destinationMatch[1]
+    .replace(/^(?:the\s+)?(?:port|harbour|harbor|jetty)\s+(?:of\s+)?/i, "")
+    .trim();
+
+  return destination.length >= 2 ? destination : null;
+}
+
 
 type ToolRoute =
   | "weather"
@@ -823,10 +847,18 @@ function deterministicFishingSafetyAnswer(
   const ocean = evidence["Ocean Agent"] as Record<string, unknown> | undefined;
   const tide = evidence["Tide Agent"] as Record<string, unknown> | undefined;
   const hazard = evidence["Disaster / Risk Agent"] as Record<string, unknown> | undefined;
+  const canonicalSafety = evidence["Canonical Safety Engine"] as Record<string, unknown> | undefined;
   const geofence = evidence["Geospatial Agent"] as Record<string, unknown> | undefined;
   const pfz = evidence["Fishing / PFZ Agent"] as Record<string, unknown> | undefined;
 
-  const risk = typeof hazard?.riskLevel === "string" ? hazard.riskLevel : null;
+  const risk = typeof canonicalSafety?.risk === "string"
+    ? canonicalSafety.risk
+    : typeof hazard?.riskLevel === "string"
+      ? hazard.riskLevel
+      : null;
+  const safetyScore = Number.isFinite(Number(canonicalSafety?.safetyScore))
+    ? Number(canonicalSafety?.safetyScore)
+    : null;
   const hazards = Array.isArray(hazard?.hazards) ? hazard.hazards : [];
   const waveHeight = typeof ocean?.waveHeight === "number" ? ocean.waveHeight : null;
   const windSpeed = typeof weather?.windSpeed === "number" ? weather.windSpeed : null;
@@ -854,7 +886,8 @@ function deterministicFishingSafetyAnswer(
   }
 
   const evidenceLines: string[] = [];
-  if (risk) evidenceLines.push(`Risk service: ${risk}.`);
+  if (risk) evidenceLines.push(`Canonical marine safety risk: ${risk}.`);
+  if (safetyScore !== null) evidenceLines.push(`Canonical marine safety score: ${safetyScore}/100.`);
   if (windSpeed !== null) evidenceLines.push(`Wind: ${windSpeed} km/h.`);
   if (waveHeight !== null) evidenceLines.push(`Wave height: ${waveHeight} m.`);
   if (rain !== null) evidenceLines.push(`Precipitation probability: ${rain}%.`);
@@ -887,7 +920,7 @@ async function runAIAgent(
   }
 
   const primaryModel = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-  const models = [primaryModel, "llama-3.1-8b-instant"].filter(
+  const models = [primaryModel, "openai/gpt-oss-20b"].filter(
     (model, index, all) => all.indexOf(model) === index
   );
 
@@ -898,7 +931,10 @@ async function runAIAgent(
       const result = await openai.chat.completions.create({
         model,
         temperature: 0.1,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
+        ...(model.startsWith("openai/gpt-oss")
+          ? ({ reasoning_effort: "low", include_reasoning: false } as any)
+          : {}),
         messages: [
           {
             role: "system",
@@ -1034,6 +1070,71 @@ async function runAgenticWorkflow({
       analysis: entry.analysis ?? null,
       error: entry.error ?? null,
     }));
+
+  // Downstream LLM agents must not receive the full accumulated evidence bus.
+  // A safety workflow can contain many specialist payloads, PFZ geometries,
+  // fusion metadata and previous agent analyses. Sending all of that again to
+  // Risk/Validation/Explanation can exceed Groq's organization TPM limit.
+  //
+  // Keep the full evidence bus for the API/UI, but create a much smaller
+  // reasoning packet for LLM-to-LLM communication.
+  const buildReasoningEvidencePacket = (maxChars = 6200) => {
+    const priority = [
+      "Canonical Safety Engine",
+      "Disaster / Risk Agent",
+      "Weather Agent",
+      "Ocean Agent",
+      "Tide Agent",
+      "Fishing / PFZ Agent",
+      "Geospatial Agent",
+      "Route Optimization Agent",
+      "Multi-Source Data Fusion",
+      "Marine Data Agent",
+      "Alerts Agent",
+    ];
+
+    const entries = Object.values(interAgentEvidence)
+      .sort((a, b) => {
+        const ai = priority.indexOf(a.producer);
+        const bi = priority.indexOf(b.producer);
+        return (ai === -1 ? priority.length : ai) - (bi === -1 ? priority.length : bi);
+      })
+      .map((entry) => {
+        const compactData = compactAgentEvidence(entry.data);
+        const dataText = JSON.stringify(compactData);
+        return {
+          evidenceId: entry.evidenceId,
+          producer: entry.producer,
+          status: entry.status,
+          evidenceType: entry.evidenceType,
+          observedAt: entry.observedAt,
+          source: entry.source,
+          data: dataText.length > 850
+            ? `${dataText.slice(0, 850)}…[data compacted]`
+            : compactData,
+          analysis: entry.analysis
+            ? entry.analysis.slice(0, 550)
+            : null,
+          error: entry.error
+            ? entry.error.slice(0, 450)
+            : null,
+        };
+      });
+
+    const selected: typeof entries = [];
+
+    for (const entry of entries) {
+      const candidate = JSON.stringify([...selected, entry]);
+
+      if (candidate.length > maxChars) {
+        continue;
+      }
+
+      selected.push(entry);
+    }
+
+    return JSON.stringify(selected);
+  };
   const resolvedContext = `Resolved intent: ${analysis.intent}\nResolved location: ${analysis.location}\nResolved date: ${analysis.date}\nResolved time: ${analysis.time ?? "none"}`;
 
   const conversationContext =
@@ -1215,8 +1316,19 @@ async function runAgenticWorkflow({
     }
   };
 
-  const route = async () =>
-    runSpecialist(
+  const route = async () => {
+    const destination = extractRouteDestination(query);
+
+    if (!destination) {
+      return runSpecialist(
+        "Route Optimization Agent",
+        "Analyze the route service result for distance, ETA, hazards and route risk.",
+        `Analyze the available route recommendation for this user query: ${query}. Use the resolved location, date and time context when interpreting the request.`,
+        Promise.reject(new Error("Route destination could not be resolved from the query.")),
+      );
+    }
+
+    return runSpecialist(
       "Route Optimization Agent",
       "Analyze the route service result for distance, ETA, hazards and route risk.",
       `Analyze the available route recommendation for this user query: ${query}. Use the resolved location, date and time context when interpreting the request.`,
@@ -1228,11 +1340,12 @@ async function runAgenticWorkflow({
         },
         body: JSON.stringify({
           start: "Selected Operating Location",
-          destination: "PFZ-01",
+          destination,
         }),
         cache: "no-store",
       })
     );
+  };
 
   const alerts = async () =>
     runSpecialist(
@@ -1257,6 +1370,58 @@ async function runAgenticWorkflow({
   if (selected.has("Alerts Agent")) specialistTasks.push(alerts());
 
   await Promise.all(specialistTasks);
+
+  // Risk/safety workflows must use the same canonical safety engine as the
+  // dashboard/API path. This prevents the agentic workflow from maintaining
+  // a separate LLM-derived safety score.
+  const riskNeeded = ["FISHING_SAFETY", "HAZARD", "ROUTE"].includes(intent);
+
+  if (riskNeeded) {
+    try {
+      const safety = await fetchInternalJsonWithRetry(
+        `${baseUrl}/api/safety`,
+        internalFetchOptions,
+        2,
+      );
+
+      rawEvidence["Canonical Safety Engine"] = safety;
+      publishEvidence({
+        producer: "Canonical Safety Engine",
+        evidenceId: `canonical-safety-${Date.now()}`,
+        status: "available",
+        evidenceType: "analysis",
+        observedAt: typeof safety?.generatedAt === "string"
+          ? safety.generatedAt
+          : new Date().toISOString(),
+        source: "ORCA canonical /api/safety endpoint",
+        data: safety,
+        analysis: `Canonical Prototype Risk Model returned ${safety?.safetyScore ?? "unavailable"}/100 with risk ${safety?.risk ?? "unavailable"}.`,
+      });
+      addAgentTrace(
+        trace,
+        "Canonical Safety Engine",
+        "Calculated the canonical marine safety score used by the ORCA safety API before risk synthesis.",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown safety engine error";
+      publishEvidence({
+        producer: "Canonical Safety Engine",
+        evidenceId: `canonical-safety-${Date.now()}`,
+        status: "failed",
+        evidenceType: "analysis",
+        observedAt: new Date().toISOString(),
+        source: "ORCA canonical /api/safety endpoint",
+        data: null,
+        error: message,
+      });
+      addAgentTrace(
+        trace,
+        "Canonical Safety Engine",
+        `Canonical safety calculation failed: ${message}`,
+        "failed",
+      );
+    }
+  }
 
   // Item 22.4: fuse the already-retrieved specialist evidence before
   // provenance/risk/validation synthesis. The fusion layer does not fetch
@@ -1313,7 +1478,7 @@ async function runAgenticWorkflow({
   // Phase 2: Marine Data depends on specialist outputs and the fusion result, so it cannot start
   // before Phase 1 has completed.
   if (selected.has("Marine Data Agent")) {
-    const availableEvidence = JSON.stringify(buildEvidencePacket());
+    const availableEvidence = buildReasoningEvidencePacket();
 
     try {
       outputs["Marine Data Agent"] = await runAIAgent(
@@ -1353,12 +1518,11 @@ async function runAgenticWorkflow({
   // Phase 3: Risk is conditional. Only safety-critical workflows enter this
   // synthesis stage. It consumes the structured evidence published by the
   // independent specialists and the Marine Data quality pass.
-  const riskNeeded = ["FISHING_SAFETY", "HAZARD", "ROUTE"].includes(intent);
   const riskSelected = selected.has("Disaster / Risk Agent");
   const shouldRunRiskPipeline = riskNeeded && riskSelected;
 
   if (shouldRunRiskPipeline) {
-    const evidenceBeforeRisk = JSON.stringify(buildEvidencePacket());
+    const evidenceBeforeRisk = buildReasoningEvidencePacket();
 
     try {
       outputs["Risk Agent"] = await runAIAgent(
@@ -1406,7 +1570,7 @@ async function runAgenticWorkflow({
   let validationPassed = false;
 
   if (validationReady) {
-    const validationContext = JSON.stringify(buildEvidencePacket());
+    const validationContext = buildReasoningEvidencePacket();
 
     try {
       outputs["Validation / Safety Agent"] = await runAIAgent(
@@ -1433,18 +1597,24 @@ async function runAgenticWorkflow({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown validation error";
       outputs["Validation / Safety Agent"] = deterministicValidationSummary(outputs);
-      validationPassed = true;
+      validationPassed = false;
       publishEvidence({
         producer: "Validation / Safety Agent",
         evidenceId: `validation-${Date.now()}`,
-        status: "available",
+        status: "failed",
         evidenceType: "validation",
         observedAt: new Date().toISOString(),
         source: "ORCA inter-agent evidence bus",
         data: buildEvidencePacket(),
         analysis: outputs["Validation / Safety Agent"],
+        error: message,
       });
-      addAgentTrace(trace, "Validation / Safety Agent", `LLM validation unavailable; published deterministic safety validation (${message}).`);
+      addAgentTrace(
+        trace,
+        "Validation / Safety Agent",
+        `LLM validation failed; the safety gate remains blocked and no validated recommendation will be generated (${message}).`,
+        "failed",
+      );
     }
   }
 
@@ -1457,7 +1627,7 @@ async function runAgenticWorkflow({
     validationPassed;
 
   if (explanationReady) {
-    const finalContext = JSON.stringify(buildEvidencePacket());
+    const finalContext = buildReasoningEvidencePacket();
 
     try {
       const finalAnswer = await runAIAgent(
@@ -1699,10 +1869,10 @@ async function translateResponse(
 
   try {
     const result = await openai.chat.completions.create({
-      model: "qwen/qwen3.6-27b",
+      model: "qwen/qwen3.8-27b",
       reasoning_effort: "none",
       temperature: 0.1,
-      max_tokens: 900,
+      max_completion_tokens: 900,
       messages: [
         {
           role: "system",
@@ -2344,51 +2514,58 @@ export async function POST(request: Request) {
           "ORCA could not connect to the marine hazard service.";
       }
     } else if (!agenticResult && intent === "ROUTE") {
-      try {
-        const routeRes = await fetch(
-          `${baseUrl}/api/route`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Cookie: cookie,
-            },
-            body: JSON.stringify({
-              start: "Selected Operating Location",
-              destination: "PFZ-01",
-            }),
-            cache: "no-store",
-          }
-        );
+      const destination = extractRouteDestination(resolvedQuery);
 
-        if (!routeRes.ok) {
-          throw new Error("Route API failed");
-        }
-
-        const routeData = await routeRes.json();
-        const route = routeData?.route;
-
-        if (route) {
-          response = [
-            `Route recommendation from ${route.start} to ${route.destination}:`,
-            `approximately ${route.distanceKm} km,`,
-            `estimated travel time ${route.estimatedTimeMinutes} minutes.`,
-            `Risk level: ${route.riskLevel}.`,
-            `Hazards: ${
-              Array.isArray(route.hazards)
-                ? route.hazards.join(", ")
-                : "None reported"
-            }.`,
-            route.recommendation ??
-              "No additional route recommendation was provided.",
-          ].join(" ");
-        } else {
-          response =
-            "Unable to calculate the marine route.";
-        }
-      } catch {
+      if (!destination) {
         response =
-          "ORCA could not connect to the route optimization service.";
+          "Where do you want to travel to? Please provide the destination (place name or coordinates) so I can evaluate the route.";
+      } else {
+        try {
+          const routeRes = await fetch(
+            `${baseUrl}/api/route`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Cookie: cookie,
+              },
+              body: JSON.stringify({
+                start: "Selected Operating Location",
+                destination,
+              }),
+              cache: "no-store",
+            }
+          );
+
+          if (!routeRes.ok) {
+            throw new Error("Route API failed");
+          }
+
+          const routeData = await routeRes.json();
+          const route = routeData?.route;
+
+          if (route) {
+            response = [
+              `Route recommendation from ${route.start} to ${route.destination}:`,
+              `approximately ${route.distanceKm} km,`,
+              `estimated travel time ${route.estimatedTimeMinutes} minutes.`,
+              `Risk level: ${route.riskLevel}.`,
+              `Hazards: ${
+                Array.isArray(route.hazards)
+                  ? route.hazards.join(", ")
+                  : "None reported"
+              }.`,
+              route.recommendation ??
+                "No additional route recommendation was provided.",
+            ].join(" ");
+          } else {
+            response =
+              "Unable to calculate the marine route.";
+          }
+        } catch {
+          response =
+            "ORCA could not connect to the route optimization service.";
+        }
       }
     }
 

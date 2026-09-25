@@ -49,7 +49,10 @@ export async function GET() {
     const times: string[] = Array.isArray(data.hourly?.time)
       ? data.hourly.time
       : [];
-    const heights: unknown[] = Array.isArray(data.hourly?.sea_level_height_msl)
+
+    const heights: unknown[] = Array.isArray(
+      data.hourly?.sea_level_height_msl
+    )
       ? data.hourly.sea_level_height_msl
       : [];
 
@@ -98,6 +101,7 @@ export async function GET() {
       latitude: location.latitude,
       longitude: location.longitude,
       tides: tides.slice(0, 6),
+      generatedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error("Tide API error:", error);

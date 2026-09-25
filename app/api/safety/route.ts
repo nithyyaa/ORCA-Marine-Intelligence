@@ -36,7 +36,10 @@ function deriveTideRisk(tide: JsonObject | null): number | null {
   return 10;
 }
 
-function deriveHazardRisk(hazard: JsonObject | null, type: "lightning" | "cyclone"): number | null {
+function deriveHazardRisk(
+  hazard: JsonObject | null,
+  type: "lightning" | "cyclone",
+): number | null {
   const hazards = Array.isArray(hazard?.hazards) ? hazard.hazards : [];
 
   const matching = hazards.filter((item: any) => {
@@ -53,8 +56,17 @@ function deriveHazardRisk(hazard: JsonObject | null, type: "lightning" | "cyclon
     return null;
   }
 
-  const severities = matching.map((item: any) => String(item?.severity ?? "").toLowerCase());
-  if (severities.some((s: string) => s.includes("critical") || s.includes("extreme"))) return 100;
+  const severities = matching.map((item: any) =>
+    String(item?.severity ?? "").toLowerCase(),
+  );
+
+  if (
+    severities.some(
+      (s: string) => s.includes("critical") || s.includes("extreme"),
+    )
+  )
+    return 100;
+
   if (severities.some((s: string) => s.includes("high"))) return 80;
   if (severities.some((s: string) => s.includes("moderate"))) return 50;
   return 30;
@@ -80,13 +92,14 @@ export async function GET(request: Request) {
   };
 
   try {
-    const [weatherRes, oceanRes, tideRes, hazardRes, geofenceRes] = await Promise.all([
-      fetch(`${baseUrl}/api/weather`, fetchOptions),
-      fetch(`${baseUrl}/api/ocean`, fetchOptions),
-      fetch(`${baseUrl}/api/tide`, fetchOptions),
-      fetch(`${baseUrl}/api/hazard`, fetchOptions),
-      fetch(`${baseUrl}/api/geofence`, fetchOptions),
-    ]);
+    const [weatherRes, oceanRes, tideRes, hazardRes, geofenceRes] =
+      await Promise.all([
+        fetch(`${baseUrl}/api/weather`, fetchOptions),
+        fetch(`${baseUrl}/api/ocean`, fetchOptions),
+        fetch(`${baseUrl}/api/tide`, fetchOptions),
+        fetch(`${baseUrl}/api/hazard`, fetchOptions),
+        fetch(`${baseUrl}/api/geofence`, fetchOptions),
+      ]);
 
     const [weather, ocean, tide, hazard, geofence] = await Promise.all([
       readJson(weatherRes),
@@ -107,14 +120,24 @@ export async function GET(request: Request) {
         live: false,
         ready: false,
         model: "Prototype Risk Model",
-        message: "Marine safety assessment is unavailable because live weather, ocean and tide data could not be retrieved.",
+        message:
+          "Marine safety assessment is unavailable because live weather, ocean and tide data could not be retrieved.",
       });
     }
 
-    const windSpeed = Number.isFinite(Number(weather?.windSpeed)) ? Number(weather?.windSpeed) : null;
-    const waveHeight = Number.isFinite(Number(ocean?.waveHeight)) ? Number(ocean?.waveHeight) : null;
-    const rainfall = Number.isFinite(Number(weather?.precipitationProbability))
-      ? Number(weather?.precipitationProbability)
+    const windValue = weather?.windSpeed;
+    const windSpeed = Number.isFinite(Number(windValue))
+      ? Number(windValue)
+      : null;
+
+    const waveValue = ocean?.waveHeight;
+    const waveHeight = Number.isFinite(Number(waveValue))
+      ? Number(waveValue)
+      : null;
+
+    const rainfallValue = weather?.precipitationProbability;
+    const rainfall = Number.isFinite(Number(rainfallValue))
+      ? Number(rainfallValue)
       : null;
 
     const result = calculateMarineSafety({
@@ -125,7 +148,10 @@ export async function GET(request: Request) {
       lightningRisk: deriveHazardRisk(hazard, "lightning"),
       cycloneRisk: deriveHazardRisk(hazard, "cyclone"),
       tideRisk: deriveTideRisk(tide),
-      insideEEZ: typeof geofence?.insideEEZ === "boolean" ? geofence.insideEEZ : null,
+      insideEEZ:
+        typeof geofence?.insideEEZ === "boolean"
+          ? geofence.insideEEZ
+          : null,
       geofenceRisk: geofencePenalty(geofence),
     });
 
@@ -134,8 +160,14 @@ export async function GET(request: Request) {
       ready: true,
       model: result.model,
       location: weather?.location ?? geofence?.location ?? null,
-      latitude: weather?.latitude ?? geofence?.location?.latitude ?? null,
-      longitude: weather?.longitude ?? geofence?.location?.longitude ?? null,
+      latitude:
+        weather?.latitude ??
+        geofence?.location?.latitude ??
+        null,
+      longitude:
+        weather?.longitude ??
+        geofence?.location?.longitude ??
+        null,
       safetyScore: result.safetyScore,
       risk: result.risk,
       confidence: result.confidence,
@@ -154,10 +186,13 @@ export async function GET(request: Request) {
         ? {
             insideEEZ: geofence.insideEEZ,
             warning: geofence.warning ?? null,
-            distanceToBoundaryKm: geofence.distanceToBoundaryKm ?? null,
+            distanceToBoundaryKm:
+              geofence.distanceToBoundaryKm ?? null,
           }
         : null,
-      hazards: Array.isArray(hazard?.hazards) ? hazard.hazards : [],
+      hazards: Array.isArray(hazard?.hazards)
+        ? hazard.hazards
+        : [],
       sources: {
         weather: weather?.source ?? null,
         ocean: ocean?.source ?? null,
@@ -174,7 +209,8 @@ export async function GET(request: Request) {
         live: false,
         ready: false,
         model: "Prototype Risk Model",
-        message: "Marine safety assessment is temporarily unavailable.",
+        message:
+          "Marine safety assessment is temporarily unavailable.",
       },
       { status: 503 },
     );

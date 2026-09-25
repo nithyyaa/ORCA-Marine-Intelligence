@@ -13,7 +13,9 @@ export async function GET() {
       );
     }
 
-    const location = JSON.parse(decodeURIComponent(locationCookie));
+    const location = JSON.parse(
+      decodeURIComponent(locationCookie)
+    );
 
     if (
       typeof location.latitude !== "number" ||
@@ -48,11 +50,17 @@ export async function GET() {
       latitude: location.latitude,
       longitude: location.longitude,
 
-      waveHeight: data.current?.wave_height ?? null,
-      waveDirection: data.current?.wave_direction ?? null,
-      wavePeriod: data.current?.wave_period ?? null,
+      waveHeight:
+        data.current?.wave_height ?? null,
 
-      sst: data.current?.sea_surface_temperature ?? null,
+      waveDirection:
+        data.current?.wave_direction ?? null,
+
+      wavePeriod:
+        data.current?.wave_period ?? null,
+
+      sst:
+        data.current?.sea_surface_temperature ?? null,
 
       oceanCurrentVelocity:
         data.current?.ocean_current_velocity ?? null,
@@ -60,9 +68,13 @@ export async function GET() {
       oceanCurrentDirection:
         data.current?.ocean_current_direction ?? null,
 
-      time: data.current?.time ?? null,
+      time:
+        data.current?.time ?? null,
 
       source: "Open-Meteo Marine API",
+
+      generatedAt:
+        new Date().toISOString(),
     });
   } catch (error) {
     console.error("Ocean API error:", error);

@@ -23,10 +23,12 @@ export async function GET(request: Request) {
 
     const latitude = Number(searchParams.get("lat"));
     const longitude = Number(searchParams.get("lon"));
-    const hours = Math.min(
-      24,
-      Math.max(1, Number(searchParams.get("hours") || 24))
-    );
+
+    const requestedHours = Number(searchParams.get("hours") || 24);
+
+    const hours = Number.isFinite(requestedHours)
+      ? Math.min(24, Math.max(1, requestedHours))
+      : 24;
 
     if (
       !Number.isFinite(latitude) ||
@@ -124,9 +126,15 @@ export async function GET(request: Request) {
       longitude,
       forecastHours: hours,
       hourly: rows,
+      dataAvailability: {
+        weather: weatherTimes.length > 0,
+        marine: marineTimes.length > 0,
+      },
       sources: {
         weather: "Open-Meteo",
-        marine: "Open-Meteo Marine API",
+        marine: marineResponse.ok
+          ? "Open-Meteo Marine API"
+          : null,
       },
       generatedAt: new Date().toISOString(),
     });

@@ -18,6 +18,20 @@ export async function GET(request: Request) {
       );
     }
 
+    if (
+      lat < -90 ||
+      lat > 90 ||
+      lon < -180 ||
+      lon > 180
+    ) {
+      return NextResponse.json(
+        {
+          error: "Invalid latitude or longitude",
+        },
+        { status: 400 }
+      );
+    }
+
     const zones = await db.execute(sql`
       SELECT
         zone_id,
@@ -51,12 +65,21 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
+
+      live: true,
+
+      source: "INCOIS PFZ Database",
+
       location: {
         latitude: lat,
         longitude: lon,
       },
+
       count: zones.length,
       zones,
+
+      generatedAt:
+        new Date().toISOString(),
     });
   } catch (error) {
     console.error("Nearby PFZ error:", error);
@@ -64,6 +87,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         success: false,
+        live: false,
         error: "Unable to find nearby PFZ zones",
       },
       { status: 500 }

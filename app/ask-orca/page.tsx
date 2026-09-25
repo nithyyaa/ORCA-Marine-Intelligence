@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bot,
@@ -76,13 +76,17 @@ const suggestions = [
 export default function AskORCA() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<
-    { role: "user" | "orca"; text: string }[]
+    { role: "user" | "orca"; text: string; language?: string }[]
   >([]);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
 
   // Voice output state
   const [speakingMessage, setSpeakingMessage] = useState<number | null>(null);
+
+  // Cloud TTS audio state. The Sarvam API key stays server-side in /api/tts.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
 
   const [agentTraces, setAgentTraces] = useState<
     Record<number, AgentTrace[]>
@@ -214,162 +218,165 @@ export default function AskORCA() {
     }
   }
 
-  /*
-   * Browser voice output.
+   /*
+   * Cloud voice output.
    *
-   * IMPORTANT:
-   * This intentionally uses the browser's built-in speechSynthesis.
-   * No Azure.
-   * No /api/tts.
-   * No API key.
-   *
-   * Voice output follows the selected ORCA language.
+   * ORCA responses are sent to our server-side /api/tts route,
+   * which calls Sarvam Bulbul v3. The Sarvam API key never reaches
+   * the browser.
    */
- function speakResponse(
-  text: string,
-  messageIndex: number
-) {
-  if (typeof window === "undefined") return;
+  async function speakResponse(
+    text: string,
+    messageIndex: number,
+    messageLanguage?: string
+  ) {
+    if (typeof window === "undefined") return;
 
-  if (!("speechSynthesis" in window)) {
-    alert(
-      "Voice output is not supported in this browser."
-    );
-    return;
-  }
+    // If this message is already playing, stop it.
+    if (speakingMessage === messageIndex) {
+      audioRef.current?.pause();
 
-  // If this response is already speaking,
-  // stop the current speech.
-  if (speakingMessage === messageIndex) {
-    window.speechSynthesis.cancel();
-    setSpeakingMessage(null);
-    return;
-  }
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+      }
 
-  // Stop any previous speech.
-  window.speechSynthesis.cancel();
+      setSpeakingMessage(null);
 
-  const cleanText = text
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/[*_`#]/g, "")
-    .replace(/\n+/g, ". ")
-    .trim();
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
 
-  if (!cleanText) return;
-
-  const utterance =
-    new SpeechSynthesisUtterance(cleanText);
-
-  const speechLanguage: Record<string, string> = {
-    en: "en-IN",
-    te: "te-IN",
-    hi: "hi-IN",
-    ta: "ta-IN",
-    kn: "kn-IN",
-  };
-
-  const targetLanguage =
-    speechLanguage[language] || "en-IN";
-
-  utterance.lang = targetLanguage;
-  utterance.rate = 0.95;
-  utterance.pitch = 1;
-
-  const voices =
-    window.speechSynthesis.getVoices();
-
-  /*
-   * Prefer the selected language.
-   *
-   * Priority:
-   * 1. Exact Indian language
-   * 2. Same language family
-   * 3. English India fallback
-   */
-  const languageVoice =
-    voices.find(
-      (voice) =>
-        voice.lang.toLowerCase() ===
-        targetLanguage.toLowerCase()
-    ) ||
-    voices.find(
-      (voice) =>
-        voice.lang
-          .toLowerCase()
-          .startsWith(
-            targetLanguage
-              .split("-")[0]
-              .toLowerCase()
-          )
-    ) ||
-    voices.find((voice) =>
-      voice.lang
-        .toLowerCase()
-        .startsWith("en-in")
-    ) ||
-    voices.find((voice) =>
-      voice.lang
-        .toLowerCase()
-        .startsWith("en")
-    );
-
-  if (languageVoice) {
-    utterance.voice = languageVoice;
-  }
-
-  utterance.onstart = () => {
-    setSpeakingMessage(messageIndex);
-  };
-
-  utterance.onend = () => {
-    setSpeakingMessage(null);
-  };
-
-  utterance.onerror = (event) => {
-    console.error(
-      "Browser speech synthesis error:",
-      event
-    );
-
-    setSpeakingMessage(null);
-  };
-
-  window.speechSynthesis.speak(utterance);
-}
-
-  /*
-   * Load browser voices.
-   *
-   * Some browsers populate the voice list asynchronously.
-   * This ensures that the English voice list is ready
-   * before the user presses Listen.
-   */
-  useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      !("speechSynthesis" in window)
-    ) {
+      audioRef.current = null;
       return;
     }
 
-    window.speechSynthesis.getVoices();
+    // Stop any previous audio.
+    audioRef.current?.pause();
 
-    const handleVoicesChanged = () => {
-      window.speechSynthesis.getVoices();
-    };
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+    }
 
-    window.speechSynthesis.addEventListener(
-      "voiceschanged",
-      handleVoicesChanged
-    );
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
 
-    return () => {
-      window.speechSynthesis.removeEventListener(
-        "voiceschanged",
-        handleVoicesChanged
+    audioRef.current = null;
+    setSpeakingMessage(null);
+
+    const cleanText = text
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/[*_`#]/g, "")
+      .replace(/\n+/g, ". ")
+      .trim();
+
+    if (!cleanText) return;
+
+    const supportedLanguages = ["en", "te", "hi", "ta", "kn"];
+    const targetLanguage =
+      supportedLanguages.includes(messageLanguage || "")
+        ? messageLanguage!
+        : language;
+
+    try {
+      setSpeakingMessage(messageIndex);
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: cleanText,
+          language: targetLanguage,
+        }),
+      });
+
+      if (!response.ok) {
+        let errorMessage = `TTS request failed (${response.status})`;
+
+        try {
+          const data = await response.json();
+
+          if (data?.error) {
+            errorMessage = data.error;
+          }
+        } catch {
+          // Keep the HTTP error message when the response is not JSON.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      audioUrlRef.current = audioUrl;
+
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setSpeakingMessage(null);
+
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = null;
+        }
+
+        if (audioRef.current === audio) {
+          audioRef.current = null;
+        }
+      };
+
+      audio.onerror = (event) => {
+        console.error("Cloud TTS audio playback error:", event);
+        setSpeakingMessage(null);
+
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = null;
+        }
+
+        if (audioRef.current === audio) {
+          audioRef.current = null;
+        }
+
+        alert("ORCA could not play the generated voice audio.");
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error("Cloud TTS error:", error);
+      setSpeakingMessage(null);
+
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+
+      audioRef.current = null;
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "ORCA could not generate the voice response."
       );
+    }
+  }
 
-      window.speechSynthesis.cancel();
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+
+      audioRef.current = null;
     };
   }, []);
 
@@ -450,6 +457,26 @@ export default function AskORCA() {
       const messageIndex =
         messages.length + 1;
 
+      const supportedResponseLanguages = [
+        "en",
+        "te",
+        "hi",
+        "ta",
+        "kn",
+      ];
+
+      const responseLanguage =
+        typeof data.language === "string" &&
+        supportedResponseLanguages.includes(data.language)
+          ? data.language
+          : language;
+
+      // Keep the selector synchronized with the language
+      // actually used by ORCA for this response.
+      if (responseLanguage !== language) {
+        setLanguage(responseLanguage);
+      }
+
       if (Array.isArray(data.agents)) {
         setAgentTraces((prev) => ({
           ...prev,
@@ -492,6 +519,7 @@ export default function AskORCA() {
           text:
             data.response ||
             "Unable to get a marine intelligence response.",
+          language: responseLanguage,
         },
       ]);
     } catch (error) {
@@ -692,7 +720,7 @@ export default function AskORCA() {
                     {message.text}
                   </div>
 
-                  {/* English browser TTS button */}
+                  {/* Cloud TTS button */}
                   {message.role === "orca" && (
                     <div className="flex justify-end">
                       <button
@@ -700,7 +728,8 @@ export default function AskORCA() {
                         onClick={() =>
                           speakResponse(
                             message.text,
-                            index
+                            index,
+                            message.language || language
                           )
                         }
                         title={

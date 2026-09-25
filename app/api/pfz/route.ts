@@ -16,8 +16,37 @@ export async function GET(request: NextRequest) {
     const lat = Number(searchParams.get("lat"));
     const lon = Number(searchParams.get("lon"));
 
-    const latitude = Number.isFinite(lat) ? lat : 17.6868;
-    const longitude = Number.isFinite(lon) ? lon : 83.2185;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return NextResponse.json(
+        {
+          live: false,
+          source: "INCOIS",
+          error: "Valid latitude and longitude are required",
+          zones: [],
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      lat < -90 ||
+      lat > 90 ||
+      lon < -180 ||
+      lon > 180
+    ) {
+      return NextResponse.json(
+        {
+          live: false,
+          source: "INCOIS",
+          error: "Invalid latitude or longitude",
+          zones: [],
+        },
+        { status: 400 }
+      );
+    }
+
+    const latitude = lat;
+    const longitude = lon;
 
     const response = await fetch(PFZ_URL, {
       cache: "no-store",
@@ -51,28 +80,58 @@ export async function GET(request: NextRequest) {
 
         if (!points.length) return null;
 
-        const nearest = points.reduce((best: any, point: any) => {
-          const bestDistance =
-            Math.pow(best.latitude - latitude, 2) +
-            Math.pow(best.longitude - longitude, 2);
+        const nearest = points.reduce(
+          (best: any, point: any) => {
+            const bestDistance =
+              Math.pow(
+                best.latitude - latitude,
+                2
+              ) +
+              Math.pow(
+                best.longitude - longitude,
+                2
+              );
 
-          const pointDistance =
-            Math.pow(point.latitude - latitude, 2) +
-            Math.pow(point.longitude - longitude, 2);
+            const pointDistance =
+              Math.pow(
+                point.latitude - latitude,
+                2
+              ) +
+              Math.pow(
+                point.longitude - longitude,
+                2
+              );
 
-          return pointDistance < bestDistance ? point : best;
-        });
+            return pointDistance < bestDistance
+              ? point
+              : best;
+          }
+        );
 
         return {
-          id: feature.id ?? `PFZ-${index + 1}`,
+          id:
+            feature.id ??
+            `PFZ-${index + 1}`,
+
           latitude: nearest.latitude,
           longitude: nearest.longitude,
+
           geometry: points,
-          sector: feature.properties?.SECTORNAME ?? "",
-          year: feature.properties?.Year ?? null,
-          julianDay: feature.properties?.Julian_day ?? null,
-          length: feature.properties?.Length ?? null,
-          source: "INCOIS PFZ Web Feature Service",
+
+          sector:
+            feature.properties?.SECTORNAME ?? "",
+
+          year:
+            feature.properties?.Year ?? null,
+
+          julianDay:
+            feature.properties?.Julian_day ?? null,
+
+          length:
+            feature.properties?.Length ?? null,
+
+          source:
+            "INCOIS PFZ Web Feature Service",
         };
       })
       .filter(Boolean);
@@ -80,12 +139,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       live: true,
       source: "INCOIS",
+
       location: {
         latitude,
         longitude,
       },
+
       count: zones.length,
       zones,
+
+      generatedAt:
+        new Date().toISOString(),
     });
   } catch (error) {
     console.error("PFZ error:", error);

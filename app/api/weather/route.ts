@@ -16,7 +16,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const location = JSON.parse(decodeURIComponent(locationCookie));
+    const location = JSON.parse(
+      decodeURIComponent(locationCookie)
+    );
 
     if (
       typeof location.latitude !== "number" ||
@@ -75,6 +77,8 @@ export async function GET(request: Request) {
           data.daily?.weather_code?.[1] ?? null,
 
         source: "Open-Meteo",
+
+        generatedAt: new Date().toISOString(),
       });
     }
 
@@ -105,9 +109,11 @@ export async function GET(request: Request) {
       latitude: location.latitude,
       longitude: location.longitude,
 
-      temperature: data.current?.temperature_2m ?? null,
+      temperature:
+        data.current?.temperature_2m ?? null,
 
-      windSpeed: data.current?.wind_speed_10m ?? null,
+      windSpeed:
+        data.current?.wind_speed_10m ?? null,
 
       windDirection:
         data.current?.wind_direction_10m ?? null,
@@ -118,9 +124,12 @@ export async function GET(request: Request) {
       precipitationProbability:
         data.hourly?.precipitation_probability?.[0] ?? null,
 
-      time: data.current?.time ?? null,
+      time:
+        data.current?.time ?? null,
 
       source: "Open-Meteo",
+
+      generatedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error("Weather API error:", error);
